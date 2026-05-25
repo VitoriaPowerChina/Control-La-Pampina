@@ -6,7 +6,12 @@
   <title>Dashboard Construcción — La Pampina</title>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <link rel="stylesheet" href="styles.css">
+  <script src="i18n.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
 <div id="app">
@@ -15,67 +20,83 @@
   <header class="topbar">
     <div class="brand">
       <span class="eyebrow">PowerChina · La Pampina</span>
-      <h1>Control de Avance — Construcción</h1>
+      <h1 data-i18n="brand.title">Control de Avance — Construcción</h1>
     </div>
     <div class="topbar-right">
       <span id="metaDate" class="meta-badge"></span>
+      <div class="lang-switcher">
+        <button class="lang-btn active" data-lang="es" onclick="setLang('es')">ES</button>
+        <button class="lang-btn" data-lang="en" onclick="setLang('en')">EN</button>
+        <button class="lang-btn" data-lang="zh" onclick="setLang('zh')">中文</button>
+      </div>
       <label class="upload-btn">
         <input id="fileInput" type="file" accept=".xlsx,.xlsm,.xls">
-        ↑ Actualizar Anexo 01
+        <span data-i18n="topbar.upload">↑ Actualizar Anexo 01</span>
       </label>
-      <button id="themeToggle" class="theme-toggle" title="Alternar tema">🌙</button>
+      <button id="themeToggle" class="theme-toggle" data-i18n-ttl="topbar.theme" title="Alternar tema">🌙</button>
     </div>
   </header>
 
   <!-- ── TOAST ──────────────────────────────────────────────────── -->
   <div id="toast" class="toast hidden"></div>
 
+  <!-- ── LAYOUT (sidebar + main) ───────────────────────────────── -->
+  <div class="layout">
+
+  <!-- ── SIDEBAR ────────────────────────────────────────────────── -->
+  <aside class="sidebar" id="sidebar">
+    <button class="sidebar-toggle" id="sidebarToggle" data-i18n-ttl="sidebar.collapse" title="Colapsar menú">
+      <i class="bi bi-chevron-left"></i>
+    </button>
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-tab="cenarios"><i class="bi bi-calendar3"></i><span data-i18n="nav.schedule">Cronograma</span></button>
+      <button class="nav-item" data-tab="resumen"><i class="bi bi-bar-chart-line"></i><span data-i18n="nav.summary">Resumen</span></button>
+      <button class="nav-item" data-tab="scurve"><i class="bi bi-graph-up"></i><span data-i18n="nav.scurve">Curva S</span></button>
+      <button class="nav-item" data-tab="areas"><i class="bi bi-layers"></i><span data-i18n="nav.areas">Por Área</span></button>
+      <button class="nav-item" data-tab="desvios"><i class="bi bi-exclamation-triangle"></i><span data-i18n="nav.desvios">Desvíos</span></button>
+      <button class="nav-item" data-tab="criticas"><i class="bi bi-exclamation-circle"></i><span data-i18n="nav.critical">Críticas</span></button>
+      <button class="nav-item" data-tab="sinAvance"><i class="bi bi-pause-circle"></i><span data-i18n="nav.noProgress">Sin Avance</span></button>
+      <button class="nav-item" data-tab="ranking"><i class="bi bi-trophy"></i><span data-i18n="nav.ranking">Ranking</span></button>
+      <button class="nav-item" data-tab="consolidado"><i class="bi bi-diagram-3"></i><span data-i18n="nav.consolidated">Consolidado</span></button>
+      <button class="nav-item" data-tab="tabla"><i class="bi bi-table"></i><span data-i18n="nav.table">Tabla</span></button>
+      <button class="nav-item" data-tab="simulador"><i class="bi bi-sliders"></i><span data-i18n="nav.simulator">Simulador</span></button>
+    </nav>
+  </aside>
+
+  <!-- ── MAIN AREA ───────────────────────────────────────────────── -->
+  <div class="main-area">
+
   <!-- ── KPI STRIP ──────────────────────────────────────────────── -->
   <section class="kpi-strip">
     <div class="kpi" id="kpi-plan">
       <div class="kpi-val" id="kPlan">—</div>
-      <div class="kpi-lbl">% Planeado</div>
+      <div class="kpi-lbl" data-i18n="kpi.planned">% Planeado</div>
     </div>
     <div class="kpi" id="kpi-real">
       <div class="kpi-val" id="kReal">—</div>
-      <div class="kpi-lbl">% Real</div>
+      <div class="kpi-lbl" data-i18n="kpi.actual">% Real</div>
     </div>
     <div class="kpi kpi-alert" id="kpi-dev">
       <div class="kpi-val" id="kDev">—</div>
-      <div class="kpi-lbl">Desvío Acum.</div>
+      <div class="kpi-lbl" data-i18n="kpi.deviation">Desvío Acum.</div>
     </div>
     <div class="kpi">
       <div class="kpi-val" id="kHH">—</div>
-      <div class="kpi-lbl">H-H Totales</div>
+      <div class="kpi-lbl" data-i18n="kpi.hh">H-H Totales</div>
     </div>
     <div class="kpi">
       <div class="kpi-val" id="kAct">—</div>
-      <div class="kpi-lbl">Actividades</div>
+      <div class="kpi-lbl" data-i18n="kpi.activities">Actividades</div>
     </div>
     <div class="kpi kpi-warn">
       <div class="kpi-val" id="kSin">—</div>
-      <div class="kpi-lbl">Sin Avance</div>
+      <div class="kpi-lbl" data-i18n="kpi.noProgress">Sin Avance</div>
     </div>
     <div class="kpi">
       <div class="kpi-val" id="kForecast">—</div>
-      <div class="kpi-lbl">Forecast fin</div>
+      <div class="kpi-lbl" data-i18n="kpi.forecast">Forecast fin</div>
     </div>
   </section>
-
-  <!-- ── TABS ────────────────────────────────────────────────────── -->
-  <nav class="tabs">
-    <button class="tab active" data-tab="cenarios">Cronograma</button>
-    <button class="tab" data-tab="resumen">Resumen</button>
-    <button class="tab" data-tab="scurve">Curva S</button>
-    <button class="tab" data-tab="areas">Por Área</button>
-    <button class="tab" data-tab="desvios">Top Desvíos</button>
-    <button class="tab" data-tab="criticas">Críticas</button>
-    <button class="tab" data-tab="sinAvance">Sin Avance</button>
-    <button class="tab" data-tab="ranking">Ranking</button>
-    <button class="tab" data-tab="consolidado">Consolidado</button>
-    <button class="tab" data-tab="tabla">Tabla</button>
-    <button class="tab" data-tab="simulador">Simulador</button>
-  </nav>
 
   <main class="content">
 
@@ -86,20 +107,20 @@
       <div id="welcomeCard" class="welcome-card">
         <div class="welcome-inner">
           <div class="welcome-eyebrow">PowerChina · La Pampina</div>
-          <h2>Dashboard de Construcción</h2>
-          <p>Cargue el archivo <strong>Anexo 01-LPA.xlsm</strong> para iniciar el dashboard.</p>
-          <p style="color:#888;font-size:13px">Use o botão <strong>↑ Actualizar Anexo 01</strong> no topo da página.</p>
+          <h2 data-i18n="welcome.title">Dashboard de Construcción</h2>
+          <p data-i18n-html="welcome.file">Cargue el archivo <strong>Anexo 01-LPA.xlsm</strong> para iniciar el dashboard.</p>
+          <p style="color:#888;font-size:13px" data-i18n-html="welcome.hint">Use el botón <strong>↑ Actualizar Anexo 01</strong> en la parte superior de la página.</p>
         </div>
       </div>
 
       <div id="resumenContent" style="display:none">
       <div class="two-col">
         <div>
-          <h2>Resumen Ejecutivo</h2>
+          <h2 data-i18n="res.execTitle">Resumen Ejecutivo</h2>
           <div id="resumenText" class="executive-text"></div>
         </div>
         <div>
-          <h2>Avance por Área</h2>
+          <h2 data-i18n="res.areaTitle">Avance por Área</h2>
           <div style="position:relative;height:260px">
             <canvas id="areaChart"></canvas>
           </div>
@@ -107,19 +128,19 @@
       </div>
       <div class="three-col" style="margin-top:24px">
         <div class="chart-card">
-          <h2>Estado de Actividades</h2>
+          <h2 data-i18n="res.statusTitle">Estado de Actividades</h2>
           <div style="position:relative;height:220px">
             <canvas id="statusDonut"></canvas>
           </div>
         </div>
         <div class="chart-card">
-          <h2>Progreso Semanal (últ. 10 sem.)</h2>
+          <h2 data-i18n="res.weeklyTitle">Progreso Semanal (últ. 10 sem.)</h2>
           <div style="position:relative;height:220px">
             <canvas id="weeklyBar"></canvas>
           </div>
         </div>
         <div class="chart-card">
-          <h2>Top 5 Desvíos Críticos</h2>
+          <h2 data-i18n="res.top5Title">Top 5 Desvíos Críticos</h2>
           <div id="top5List" class="top5-list"></div>
         </div>
       </div>
@@ -129,7 +150,10 @@
     <!-- ── CURVA S ─────────────────────────────────────────────── -->
     <section id="tab-scurve" class="tab-pane">
       <div class="tab-header">
-        <h2>Curva S — Construcción La Pampina</h2>
+        <h2 data-i18n="sc.title">Curva S — Construcción La Pampina</h2>
+        <div class="filters">
+          <button class="btn-pdf" id="scurvePdfBtn" data-i18n="pdf.export">↓ Exportar PDF</button>
+        </div>
       </div>
       <div style="position:relative;height:340px">
         <canvas id="scurveChart"></canvas>
@@ -137,12 +161,12 @@
 
       <!-- Curva S filtrada por área/grupo -->
       <div class="tab-header" style="margin-top:36px">
-        <h2>Curva S Filtrada</h2>
+        <h2 data-i18n="sc.filteredTitle">Curva S Filtrada</h2>
         <div class="filters">
           <div id="scurveCascadeFilters" class="cascade-filters"></div>
         </div>
       </div>
-      <p class="subtitle" id="scurveFilterLabel">Seleccione un área para filtrar la curva</p>
+      <p class="subtitle" id="scurveFilterLabel" data-i18n="sc.filterLabel">Seleccione un área para filtrar la curva</p>
       <div style="position:relative;height:340px">
         <canvas id="scurveFilteredChart"></canvas>
       </div>
@@ -151,11 +175,11 @@
     <!-- ── POR ÁREA ────────────────────────────────────────────── -->
     <section id="tab-areas" class="tab-pane">
       <div class="tab-header">
-        <h2>Progreso por Área / Grupo</h2>
+        <h2 data-i18n="ar.title">Progreso por Área / Grupo</h2>
         <div class="filters">
           <select id="areaLvlBox">
-            <option value="3">Nivel 3 — Grupos principales</option>
-            <option value="4">Nivel 4 — Subgrupos</option>
+            <option value="3" data-i18n-opt>Nivel 3 — Grupos principales</option>
+            <option value="4" data-i18n-opt>Nivel 4 — Subgrupos</option>
           </select>
         </div>
       </div>
@@ -165,27 +189,95 @@
       <div id="areasTable"></div>
     </section>
 
-    <!-- ── TOP DESVÍOS ─────────────────────────────────────────── -->
+    <!-- ── DESVÍOS POR ÁREAS ─────────────────────────────────────── -->
     <section id="tab-desvios" class="tab-pane">
-      <div class="tab-header">
-        <h2>Top 50 — Actividades con Mayor Desvío</h2>
-        <div class="filters">
-          <input id="desvSearch" type="search" placeholder="Buscar EDT o actividad…">
-          <select id="desvAreaBox"><option value="">— Todas las áreas —</option></select>
+
+      <!-- Page header -->
+      <div class="dv-page-header">
+        <div class="dv-page-header-left">
+          <h2 class="dv-page-title" data-i18n="dv.pageTitle">Desvíos por Áreas</h2>
+          <p class="dv-page-sub" data-i18n="dv.pageSub">Análisis de desempeño por áreas de la EDT del proyecto.</p>
+        </div>
+        <div class="dv-page-header-right">
+          <span class="dv-date-badge" id="dvDateBadge">—</span>
+          <button class="dv-export-btn" id="dvExportBtn" data-i18n="dv.export">Exportar</button>
         </div>
       </div>
-      <div style="position:relative;height:320px;margin-bottom:20px">
-        <canvas id="desviosBarChart"></canvas>
+
+      <!-- KPI Row -->
+      <div class="dv-kpi-row">
+        <div class="dv-kpi-card dv-kpi-danger">
+          <div class="dv-kpi-lbl" data-i18n="dv.kpiTotal">Desvío Total del Proyecto (P.P.)</div>
+          <div class="dv-kpi-val" id="dvKpiTotal">—</div>
+        </div>
+        <div class="dv-kpi-card dv-kpi-primary">
+          <div class="dv-kpi-lbl" data-i18n="dv.kpiPlan">% Planeado</div>
+          <div class="dv-kpi-val" id="dvKpiPlan">—</div>
+        </div>
+        <div class="dv-kpi-card dv-kpi-success">
+          <div class="dv-kpi-lbl" data-i18n="dv.kpiReal">% Real</div>
+          <div class="dv-kpi-val" id="dvKpiReal">—</div>
+        </div>
+        <div class="dv-kpi-card dv-kpi-warning">
+          <div class="dv-kpi-lbl" data-i18n="dv.kpiAreas">Áreas con Desvío</div>
+          <div class="dv-kpi-val" id="dvKpiAreas">—</div>
+        </div>
       </div>
-      <div id="desviosTable"></div>
+
+      <!-- Grid Row 1: Table + Bar Chart -->
+      <div class="dv-grid-2col">
+
+        <!-- Col 1: Ranking table -->
+        <div class="dv-panel">
+          <div class="dv-panel-hdr" data-i18n="dv.rankingHdr">Ranking de Áreas por Desvío (P.P.)</div>
+          <div id="dvRankingTable"></div>
+        </div>
+
+        <!-- Col 2: Bar chart -->
+        <div class="dv-panel dv-panel-chart">
+          <div class="dv-panel-hdr" data-i18n="dv.impactHdr">Impacto en el Desvío Total del Proyecto (P.P.)</div>
+          <div style="position:relative;flex:1;min-height:180px">
+            <canvas id="dvImpactChart"></canvas>
+          </div>
+          <div class="dv-chart-footer" id="dvImpactFooter"></div>
+        </div>
+
+      </div><!-- /dv-grid-2col row1 -->
+
+      <!-- Grid Row 2: Evolution chart + Status table -->
+      <div class="dv-grid-2col" style="margin-top:20px">
+
+        <!-- Col 1: Evolution line chart -->
+        <div class="dv-panel">
+          <div class="dv-panel-hdr" data-i18n="dv.evolutionHdr">Evolución del Desvío (P.P.) por Área</div>
+          <div style="position:relative;height:280px">
+            <canvas id="dvEvolutionChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Col 2: Status table -->
+        <div class="dv-panel">
+          <div class="dv-panel-hdr" data-i18n="dv.statusHdr">Situación de las Áreas</div>
+          <div id="dvStatusTable"></div>
+        </div>
+
+      </div><!-- /dv-grid-2col row2 -->
+
+      <!-- Footer legend -->
+      <div class="dv-footer">
+        <span data-i18n="dv.footer1">Desvío (p.p.) = % Real – % Planeado</span>
+        <span data-i18n="dv.footer2">Incidencia: peso del área en el proyecto.</span>
+        <span data-i18n="dv.footer3">Impacto en el Desvío Total (p.p.) = Desvío (p.p.) × Incidencia</span>
+      </div>
+
     </section>
 
     <!-- ── CRÍTICAS ────────────────────────────────────────────── -->
     <section id="tab-criticas" class="tab-pane">
       <div class="tab-header">
-        <h2>Actividades Críticas (Alta incidencia + Desvío negativo)</h2>
+        <h2 data-i18n="cr.title">Actividades Críticas (Alta incidencia + Desvío negativo)</h2>
         <div class="filters">
-          <input id="critSearch" type="search" placeholder="Buscar EDT o actividad…">
+          <input id="critSearch" type="search" data-i18n-ph="cr.search" placeholder="Buscar EDT o actividad…">
           <select id="critAreaBox"><option value="">— Todas las áreas —</option></select>
         </div>
       </div>
@@ -198,22 +290,22 @@
     <!-- ── SIN AVANCE ──────────────────────────────────────────── -->
     <section id="tab-sinAvance" class="tab-pane">
       <div class="tab-header">
-        <h2>Actividades Planeadas sin Avance Real</h2>
+        <h2 data-i18n="sin.title">Actividades Planeadas sin Avance Real</h2>
         <div class="filters">
-          <input id="sinSearch" type="search" placeholder="Buscar EDT o actividad…">
+          <input id="sinSearch" type="search" data-i18n-ph="sin.search" placeholder="Buscar EDT o actividad…">
           <select id="sinAreaBox"><option value="">— Todas las áreas —</option></select>
         </div>
       </div>
-      <p class="subtitle">Actividades con % Plan &gt; 0 y % Real = 0</p>
+      <p class="subtitle" data-i18n="sin.subtitle">Actividades con % Plan &gt; 0 y % Real = 0</p>
       <div class="two-col" style="margin-bottom:20px">
         <div class="chart-card">
-          <h2>Distribución por Área (cant.)</h2>
+          <h2 data-i18n="sin.distTitle">Distribución por Área (cant.)</h2>
           <div style="position:relative;height:240px">
             <canvas id="sinAvanceDonut"></canvas>
           </div>
         </div>
         <div class="chart-card">
-          <h2>H-H sin avance por Área</h2>
+          <h2 data-i18n="sin.hhTitle">H-H sin avance por Área</h2>
           <div style="position:relative;height:240px">
             <canvas id="sinAvanceHHBar"></canvas>
           </div>
@@ -225,9 +317,9 @@
     <!-- ── RANKING ─────────────────────────────────────────────── -->
     <section id="tab-ranking" class="tab-pane">
       <div class="tab-header">
-        <h2>Ranking de Impactos</h2>
+        <h2 data-i18n="rk.title">Ranking de Impactos</h2>
         <div class="filters">
-          <input id="rankSearch" type="search" placeholder="Buscar EDT o actividad…">
+          <input id="rankSearch" type="search" data-i18n-ph="rk.search" placeholder="Buscar EDT o actividad…">
           <select id="rankAreaBox"><option value="">— Todas las áreas —</option></select>
           <select id="rankClasif">
             <option value="">— Todas las clasif. —</option>
@@ -238,7 +330,7 @@
           </select>
         </div>
       </div>
-      <p class="subtitle">Ordenado por impacto ponderado absoluto en el progreso total</p>
+      <p class="subtitle" data-i18n="rk.subtitle">Ordenado por impacto ponderado absoluto en el progreso total</p>
       <div style="position:relative;height:320px;margin-bottom:20px">
         <canvas id="rankingBarChart"></canvas>
       </div>
@@ -248,7 +340,7 @@
     <!-- ── CONSOLIDADO ──────────────────────────────────────────── -->
     <section id="tab-consolidado" class="tab-pane">
       <div class="tab-header">
-        <h2>Actividades Consolidadas por Power Block</h2>
+        <h2 data-i18n="con.title">Actividades Consolidadas por Power Block</h2>
         <div class="filters">
           <select id="consZoneBox">
             <option value="">— Todas las áreas —</option>
@@ -261,10 +353,10 @@
             <option value="2">Mecánica</option>
             <option value="3">Eléctrica</option>
           </select>
-          <input id="consSearch" type="search" placeholder="Buscar actividad…">
+          <input id="consSearch" type="search" data-i18n-ph="con.search" placeholder="Buscar actividad…">
         </div>
       </div>
-      <p class="subtitle">
+      <p class="subtitle" data-i18n="con.subtitle">
         Consolidación estricta por área · paquete · disciplina · EDT —
         actividades repetidas en múltiples PB agrupadas en una sola fila
       </p>
@@ -277,32 +369,36 @@
 
       <!-- Árbol WBS -->
       <div class="tab-header">
-        <h2>Árbol de Actividades (WBS)</h2>
+        <h2 data-i18n="wb.title">Árbol de Actividades (WBS)</h2>
         <div class="filters">
-          <input id="arbolSearch" type="search" placeholder="Buscar EDT o actividad…">
+          <input id="arbolSearch" type="search" data-i18n-ph="wb.search" placeholder="Buscar EDT o actividad…">
           <div id="arbolCascadeFilters" class="cascade-filters"></div>
-          <button class="btn-tree" id="arbolExpandAll" title="Expandir todo">⊞ Expandir</button>
-          <button class="btn-tree" id="arbolCollapseAll" title="Colapsar todo">⊟ Colapsar</button>
+          <button class="btn-tree" id="arbolExpandAll" data-i18n="wb.expand">⊞ Expandir</button>
+          <button class="btn-tree" id="arbolCollapseAll" data-i18n="wb.collapse">⊟ Colapsar</button>
+          <div class="pdf-btn-group">
+            <button class="btn-pdf" id="cronogramaPdfBtn" data-i18n="pdf.detailed">↓ PDF Detalhado</button>
+            <button class="btn-pdf btn-pdf-outline" id="cronogramaPdfBtnResumido" data-i18n="pdf.summary">↓ PDF Resumido</button>
+          </div>
         </div>
       </div>
       <div id="arbolWrap">
         <table>
           <thead>
             <tr>
-              <th class="left" style="min-width:170px">EDT</th>
-              <th class="left" style="min-width:220px">Actividad</th>
-              <th>H-H</th>
-              <th title="Total de Power Blocks con esta actividade">PBs</th>
-              <th title="PB planificados al corte">PB Plan.</th>
-              <th title="PB con avance real &gt; 0">PB Av.</th>
-              <th title="PB con desvío negativo">PB Dev.</th>
-              <th title="Incidencia total consolidada">Incid.Tot</th>
-              <th title="Σ incidencia × avance plan">INCD.PLAN</th>
-              <th title="Σ incidencia × avance real">INCD.REAL</th>
-              <th>% Plan</th>
-              <th>% Real</th>
-              <th>Desvío</th>
-              <th>Status</th>
+              <th class="left" style="min-width:170px" data-i18n="th.edt">EDT</th>
+              <th class="left" style="min-width:220px" data-i18n="th.activity">Actividad</th>
+              <th data-i18n="th.hh">H-H</th>
+              <th data-i18n="th.incidence">Incid.</th>
+              <th>PBs</th>
+              <th>PB Plan.</th>
+              <th>PB Av.</th>
+              <th>PB Dev.</th>
+              <th>INCD.PLAN</th>
+              <th>INCD.REAL</th>
+              <th data-i18n="th.pctPlan">% Plan</th>
+              <th data-i18n="th.pctActual">% Real</th>
+              <th data-i18n="th.deviation">Desvío</th>
+              <th data-i18n="th.status">Status</th>
             </tr>
           </thead>
           <tbody id="arbolBody"></tbody>
@@ -314,9 +410,9 @@
     <!-- ── TABLA ────────────────────────────────────────────────── -->
     <section id="tab-tabla" class="tab-pane">
       <div class="tabla-header">
-        <h2>Tabla de Actividades</h2>
+        <h2 data-i18n="tb.title">Tabla de Actividades</h2>
         <div class="filters">
-          <input id="searchBox" type="search" placeholder="Buscar EDT o actividad…">
+          <input id="searchBox" type="search" data-i18n-ph="tb.search" placeholder="Buscar EDT o actividad…">
           <select id="statusBox">
             <option value="">— Todos los estados —</option>
             <option value="late">Atrasada</option>
@@ -325,7 +421,7 @@
             <option value="notStarted">No iniciada</option>
           </select>
           <select id="areaBox"><option value="">— Todas las áreas —</option></select>
-          <button id="exportBtn">Exportar CSV</button>
+          <button id="exportBtn" data-i18n="tb.exportCsv">Exportar CSV</button>
         </div>
       </div>
       <div id="tablaWrap"></div>
@@ -337,19 +433,19 @@
       <!-- Header bar -->
       <div class="simtab-hdr">
         <div class="simtab-hdr-left">
-          <h2 style="margin-bottom:5px;font-size:17px">Simulador de Recuperação de Desvio</h2>
+          <h2 style="margin-bottom:5px;font-size:17px" data-i18n="sim.title">Simulador de Recuperación de Desvío</h2>
           <div class="simtab-scope-row">
-            <span class="simtab-scope-lbl">Escopo selecionado:</span>
+            <span class="simtab-scope-lbl" data-i18n="sim.scope">Ámbito seleccionado:</span>
             <select id="simtabScope" class="cascade-sel" style="max-width:200px"></select>
           </div>
         </div>
         <div class="simtab-hdr-center">
-          <span class="simtab-date-lbl">📅 Data de corte:</span>
+          <span class="simtab-date-lbl" data-i18n="sim.cutDate">📅 Fecha de corte:</span>
           <strong id="simtabDate" class="simtab-date-val">—</strong>
         </div>
         <div class="simtab-hdr-btns">
-          <button id="simtabReset" class="simtab-btn-outline">Resetar Simulação</button>
-          <button id="simtabCalc"  class="simtab-btn-primary">↻ Atualizar Simulação</button>
+          <button id="simtabReset" class="simtab-btn-outline" data-i18n="sim.reset">Reiniciar Simulación</button>
+          <button id="simtabCalc"  class="simtab-btn-primary" data-i18n="sim.calc">↻ Actualizar Simulación</button>
         </div>
       </div>
 
@@ -362,39 +458,39 @@
           <!-- KPI strip: current → simulated -->
           <div class="simtab-kpi-strip">
             <div class="simtab-kpanel simtab-kpanel-current">
-              <div class="simtab-ph simtab-ph-current">SITUAÇÃO ATUAL (REAL)</div>
+              <div class="simtab-ph simtab-ph-current" data-i18n="sim.currentState">SITUACIÓN ACTUAL (REAL)</div>
               <div class="simtab-kpi-row">
                 <div class="simtab-kpi-box">
-                  <div class="simtab-kpi-lbl">% Planejado</div>
+                  <div class="simtab-kpi-lbl" data-i18n="sim.pctPlanned">% Planeado</div>
                   <div class="simtab-kpi-big" id="simtabPctPlan">—</div>
                   <div class="simtab-bar-wrap"><div class="simtab-bar-fill" id="simtabPctPlanBar" style="width:0%"></div></div>
                 </div>
                 <div class="simtab-kpi-box">
-                  <div class="simtab-kpi-lbl">% Real</div>
+                  <div class="simtab-kpi-lbl" data-i18n="sim.pctActual">% Real</div>
                   <div class="simtab-kpi-big" id="simtabPctReal">—</div>
                   <div class="simtab-bar-wrap"><div class="simtab-bar-fill" id="simtabPctRealBar" style="width:0%"></div></div>
                 </div>
                 <div class="simtab-kpi-box">
-                  <div class="simtab-kpi-lbl">Desvio Atual</div>
+                  <div class="simtab-kpi-lbl" data-i18n="sim.currentDev">Desvío Actual</div>
                   <div class="simtab-kpi-big" id="simtabDevActual">—</div>
                 </div>
               </div>
             </div>
             <div class="simtab-arrow-sep">›</div>
             <div class="simtab-kpanel simtab-kpanel-result">
-              <div class="simtab-ph simtab-ph-result">RESULTADO DO CENÁRIO SIMULADO</div>
+              <div class="simtab-ph simtab-ph-result" data-i18n="sim.simResult">RESULTADO DEL ESCENARIO SIMULADO</div>
               <div class="simtab-kpi-row">
                 <div class="simtab-kpi-box">
-                  <div class="simtab-kpi-lbl">% Real Simulado</div>
+                  <div class="simtab-kpi-lbl" data-i18n="sim.pctActualSim">% Real Simulado</div>
                   <div class="simtab-kpi-big" id="simtabPctRealSim">—</div>
                   <div class="simtab-bar-wrap"><div class="simtab-bar-fill simtab-bar-green" id="simtabPctRealSimBar" style="width:0%"></div></div>
                 </div>
                 <div class="simtab-kpi-box">
-                  <div class="simtab-kpi-lbl">Recuperação Total</div>
+                  <div class="simtab-kpi-lbl" data-i18n="sim.totalRecovery">Recuperación Total</div>
                   <div class="simtab-kpi-big" id="simtabRecTotal">—</div>
                 </div>
                 <div class="simtab-kpi-box">
-                  <div class="simtab-kpi-lbl">Novo Desvio</div>
+                  <div class="simtab-kpi-lbl" data-i18n="sim.newDev">Nuevo Desvío</div>
                   <div class="simtab-kpi-big" id="simtabNewDev">—</div>
                 </div>
               </div>
@@ -406,43 +502,43 @@
 
             <!-- Add activity form -->
             <div class="simtab-panel">
-              <div class="simtab-ph">MONTE SEU CENÁRIO</div>
+              <div class="simtab-ph" data-i18n="sim.buildScenario">CONSTRUYA SU ESCENARIO</div>
               <div class="simtab-steps">
 
                 <div class="simtab-step">
-                  <div class="simtab-step-lbl">1.&nbsp; Selecionar atividade</div>
+                  <div class="simtab-step-lbl" data-i18n-html="sim.step1">1.&nbsp; Seleccionar actividad</div>
                   <select id="simtabActSelect" class="simtab-act-sel">
                     <option value="">Selecione uma atividade</option>
                   </select>
                 </div>
 
                 <div class="simtab-step">
-                  <div class="simtab-step-lbl">2.&nbsp; Informar avanço adicional</div>
+                  <div class="simtab-step-lbl" data-i18n-html="sim.step2">2.&nbsp; Informar avance adicional</div>
                   <div class="simtab-mode-bar">
-                    <button id="simtabModePB"  class="simtab-mode-btn simtab-mode-active">PB adicionais</button>
-                    <button id="simtabModePct" class="simtab-mode-btn">% de avanço</button>
+                    <button id="simtabModePB"  class="simtab-mode-btn simtab-mode-active" data-i18n="sim.pbMode">PB adicionales</button>
+                    <button id="simtabModePct" class="simtab-mode-btn" data-i18n="sim.pctMode">% de avance</button>
                   </div>
                   <div class="simtab-delta-area">
-                    <label class="simtab-delta-lbl" id="simtabDeltaLabel">Quantidade de PB adicionais</label>
+                    <label class="simtab-delta-lbl" id="simtabDeltaLabel" data-i18n="sim.pbLabel">Cantidad de PB adicionales</label>
                     <div class="simtab-delta-inp-row">
                       <input type="number" id="simtabDelta" class="simtab-delta-inp" min="0" step="1" value="0">
-                      <span class="simtab-delta-unit" id="simtabDeltaUnit">PB</span>
+                      <span class="simtab-delta-unit" id="simtabDeltaUnit" data-i18n="sim.pbUnit">PB</span>
                     </div>
                   </div>
                 </div>
 
                 <div class="simtab-step">
-                  <div class="simtab-step-lbl">3.&nbsp; Adicionar ao cenário</div>
-                  <button id="simtabAddBtn" class="simtab-btn-primary">+ Adicionar Atividade</button>
+                  <div class="simtab-step-lbl" data-i18n-html="sim.step3">3.&nbsp; Agregar al escenario</div>
+                  <button id="simtabAddBtn" class="simtab-btn-primary" data-i18n="sim.addAct">+ Agregar Actividad</button>
                 </div>
 
               </div>
-              <p class="simtab-hint">ⓘ A simulação será calculada com base nas atividades adicionadas ao cenário.</p>
+              <p class="simtab-hint" data-i18n="sim.hint">ⓘ La simulación se calculará en base a las actividades agregadas al escenario.</p>
             </div>
 
             <!-- S-curve comparativo -->
             <div class="simtab-panel">
-              <div class="simtab-ph">CURVA S — COMPARATIVO</div>
+              <div class="simtab-ph" data-i18n="sim.compareCurve">CURVA S — COMPARATIVO</div>
               <div style="position:relative;height:250px">
                 <canvas id="simtabChart"></canvas>
               </div>
@@ -452,23 +548,23 @@
 
           <!-- Activities table -->
           <div class="simtab-panel">
-            <div class="simtab-ph">ATIVIDADES DO CENÁRIO</div>
+            <div class="simtab-ph" data-i18n="sim.scenarioActs">ACTIVIDADES DEL ESCENARIO</div>
             <div id="simtabTable"></div>
           </div>
 
           <!-- How it works -->
           <div class="simtab-panel">
-            <div class="simtab-ph">COMO FUNCIONA</div>
+            <div class="simtab-ph" data-i18n="sim.howItWorks">CÓMO FUNCIONA</div>
             <div class="simtab-howto">
               <ol class="simtab-howto-list">
-                <li>Selecione uma atividade no dropdown.</li>
-                <li>Escolha se deseja informar PB adicionais ou % de avanço.</li>
-                <li>Informe a quantidade e clique em "Adicionar Atividade".</li>
+                <li data-i18n="sim.howto1">Seleccione una actividad en el desplegable.</li>
+                <li data-i18n="sim.howto2">Elija si desea informar PB adicionales o % de avance.</li>
+                <li data-i18n="sim.howto3">Ingrese la cantidad y haga clic en "Agregar Actividad".</li>
               </ol>
               <ol class="simtab-howto-list" start="4">
-                <li>A atividade aparecerá na tabela do cenário.</li>
-                <li>O sistema recalcula automaticamente a recuperação e o novo desvio.</li>
-                <li>Clique em "Atualizar Simulação" para atualizar a visualização.</li>
+                <li data-i18n="sim.howto4">La actividad aparecerá en la tabla del escenario.</li>
+                <li data-i18n="sim.howto5">El sistema recalcula automáticamente la recuperación y el nuevo desvío.</li>
+                <li data-i18n="sim.howto6">Haga clic en "Actualizar Simulación" para actualizar la visualización.</li>
               </ol>
             </div>
           </div>
@@ -479,22 +575,22 @@
         <div class="simtab-right">
 
           <div class="simtab-panel">
-            <div class="simtab-ph">RESUMO DO CENÁRIO</div>
+            <div class="simtab-ph" data-i18n="sim.scenarioSummary">RESUMEN DEL ESCENARIO</div>
             <div class="simtab-sum-list">
-              <div class="simtab-sum-row"><span>Desvio Atual</span>              <span id="simtabSumDevActual">—</span></div>
-              <div class="simtab-sum-row"><span>Recuperação Total (Simulada)</span><span id="simtabSumRecTotal">—</span></div>
-              <div class="simtab-sum-row"><span>Novo Desvio (Simulado)</span>    <span id="simtabSumNewDev">—</span></div>
-              <div class="simtab-sum-row"><span>% Real Atual</span>              <span id="simtabSumPctReal">—</span></div>
-              <div class="simtab-sum-row"><span>% Real Simulado</span>           <span id="simtabSumPctRealSim">—</span></div>
+              <div class="simtab-sum-row"><span data-i18n="sim.sumDevActual">Desvío Actual</span>                        <span id="simtabSumDevActual">—</span></div>
+              <div class="simtab-sum-row"><span data-i18n="sim.sumRecTotal">Recuperación Total (Simulada)</span>        <span id="simtabSumRecTotal">—</span></div>
+              <div class="simtab-sum-row"><span data-i18n="sim.sumNewDev">Nuevo Desvío (Simulado)</span>               <span id="simtabSumNewDev">—</span></div>
+              <div class="simtab-sum-row"><span data-i18n="sim.sumPctReal">% Real Actual</span>                        <span id="simtabSumPctReal">—</span></div>
+              <div class="simtab-sum-row"><span data-i18n="sim.sumPctRealSim">% Real Simulado</span>                   <span id="simtabSumPctRealSim">—</span></div>
             </div>
           </div>
 
           <div class="simtab-panel">
-            <div class="simtab-ph">DETALHAMENTO DO IMPACTO DO CENÁRIO</div>
+            <div class="simtab-ph" data-i18n="sim.impactDetail">DETALLE DEL IMPACTO DEL ESCENARIO</div>
             <div class="simtab-det-list">
-              <div class="simtab-det-row"><span>Desvio Atual</span>              <span id="simtabDetDevActual">—</span></div>
-              <div class="simtab-det-row"><span>Recuperação Total (Simulada)</span><span id="simtabDetRecTotal">—</span></div>
-              <div class="simtab-det-row simtab-det-hi"><span><strong>Novo Desvio (Simulado)</strong></span><span id="simtabDetNewDev">—</span></div>
+              <div class="simtab-det-row"><span data-i18n="sim.sumDevActual">Desvío Actual</span>                      <span id="simtabDetDevActual">—</span></div>
+              <div class="simtab-det-row"><span data-i18n="sim.sumRecTotal">Recuperación Total (Simulada)</span>      <span id="simtabDetRecTotal">—</span></div>
+              <div class="simtab-det-row simtab-det-hi"><span><strong data-i18n="sim.sumNewDev">Nuevo Desvío (Simulado)</strong></span><span id="simtabDetNewDev">—</span></div>
             </div>
           </div>
 
@@ -505,7 +601,9 @@
     </section><!-- /tab-simulador -->
 
   </main>
-</div>
+  </div><!-- /main-area -->
+  </div><!-- /layout -->
+</div><!-- /app -->
 
 <script src="app.js"></script>
 </body>

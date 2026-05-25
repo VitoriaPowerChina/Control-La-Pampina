@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupConsolidado();
   setupTableFilters();
   setupTabFilters();
+  setupPdfExports();
 });
 
 // ── Theme toggle ─────────────────────────────────────────────────────────────
@@ -50,12 +51,12 @@ function setupFileUpload() {
 async function handleFile(e) {
   const file = e.target.files[0];
   if (!file) return;
-  showToast('Leyendo archivo…', false, 60000);
+  showToast(t('toast.reading'), false, 60000);
   try {
     const buf = await file.arrayBuffer();
     // Yield ao browser para mostrar o toast antes do parsing pesado
     await new Promise(r => setTimeout(r, 30));
-    showToast('Procesando datos…', false, 60000);
+    showToast(t('toast.processing'), false, 60000);
     await new Promise(r => setTimeout(r, 30));
     const wb = XLSX.read(buf, {
       type: 'array',
@@ -68,9 +69,9 @@ async function handleFile(e) {
     document.getElementById('resumenContent').style.display = 'block';
     populateAreaDropdowns();
     render();
-    showToast('Cargado: ' + D.meta.dataWeek + ' · ' + D.meta.actTotal + ' actividades');
+    showToast(t('toast.loaded') + D.meta.dataWeek + ' · ' + D.meta.actTotal + t('toast.activities'));
   } catch(err) {
-    showToast('Error: ' + err.message, true);
+    showToast(t('toast.error') + err.message, true);
     console.error(err);
   }
   e.target.value = '';
@@ -211,34 +212,316 @@ function calcStatus(r) {
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
+function _tryRender(fn, ...args) {
+  try { fn(...args); } catch(e) { console.error('[render] ' + fn.name, e); }
+}
+
 function render() {
-  renderKPIs();
-  renderResumen();
-  renderAreaChart();
-  renderStatusDonut();
-  renderWeeklyBar();
-  renderTop5();
-  renderScurve();
-  renderAreasBar();
-  renderAreasTable();
-  renderDesviosBar(D.topDesvios);
-  renderDesviosTable(D.topDesvios);
-  renderCriticasBar(D.critical);
-  renderCriticasTable(D.critical);
-  renderSinAvanceCharts(D.sinAvance);
-  renderSinAvanceTable(D.sinAvance);
-  renderRankingBar(D.ranking.slice(0, 20));
-  renderRankingTable(D.ranking);
-  renderConsolidado();             // sets _consCache
-  _consolTree = buildConsolTree(); // builds virtual tree using _consCache
-  buildCascadeFilters();
-  buildScurveCascadeFilters();
-  renderScurveFiltered();
-  initSimTab();
-  initArbol();
-  renderArbol();
-  renderFuture();
-  renderTabla();
+  _tryRender(renderKPIs);
+  _tryRender(renderResumen);
+  _tryRender(renderAreaChart);
+  _tryRender(renderStatusDonut);
+  _tryRender(renderWeeklyBar);
+  _tryRender(renderTop5);
+  _tryRender(renderScurve);
+  _tryRender(renderAreasBar);
+  _tryRender(renderAreasTable);
+  _tryRender(renderDesviosBar, D.topDesvios);
+  _tryRender(renderDesviosTable, D.topDesvios);
+  _tryRender(renderCriticasBar, D.critical);
+  _tryRender(renderCriticasTable, D.critical);
+  _tryRender(renderSinAvanceCharts, D.sinAvance);
+  _tryRender(renderSinAvanceTable, D.sinAvance);
+  _tryRender(renderRankingBar, D.ranking.slice(0, 20));
+  _tryRender(renderRankingTable, D.ranking);
+  _tryRender(renderConsolidado);
+  try { populateAreaDropdowns(); } catch(e) { console.error('[render] populateAreaDropdowns', e); }
+  try { _consolTree = buildConsolTree(); } catch(e) { console.error('[render] buildConsolTree', e); }
+  try { buildCascadeFilters(); } catch(e) { console.error('[render] buildCascadeFilters', e); }
+  try { buildScurveCascadeFilters(); } catch(e) { console.error('[render] buildScurveCascadeFilters', e); }
+  _tryRender(renderScurveFiltered);
+  _tryRender(initSimTab);
+  _tryRender(initArbol);
+  _tryRender(renderArbol);
+  _tryRender(renderFuture);
+  _tryRender(renderTabla);
+  _tryRender(renderDesviosPorAreas);
+}
+
+// ── Desvíos por Áreas ─────────────────────────────────────────────────────────
+const DV_COLORS = ['#f59e0b','#22c55e','#3b82f6','#14b8a6','#8b5cf6','#06b6d4','#ec4899','#eab308','#ef4444','#a78bfa'];
+
+function renderDesviosPorAreas() {
+  if (!D) return;
+
+  const areas = D.areas.filter(a => a.nivel === 3 && a.incidencia > 0.001);
+  const totalRow = D.allRecords.find(r => r.edt === '4.5');
+  const currIdx = D.scurve.findIndex(s => s.isCurrent);
+
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+  const totalDesvPond = areas.reduce((s, a) => s + (a.desvPond || 0), 0);
+  const totalPP = totalDesvPond * 100;
+  const pctPlan = totalRow ? totalRow.pctCompPlan * 100 : 0;
+  const pctReal = totalRow ? totalRow.pctCompReal * 100 : 0;
+  const areasNeg = areas.filter(a => (a.pctCompReal - a.pctCompPlan) < 0);
+
+  const dvKpiTotal = document.getElementById('dvKpiTotal');
+  const dvKpiPlan  = document.getElementById('dvKpiPlan');
+  const dvKpiReal  = document.getElementById('dvKpiReal');
+  const dvKpiAreas = document.getElementById('dvKpiAreas');
+  const dvDateBadge = document.getElementById('dvDateBadge');
+
+  if (dvDateBadge && D.meta.dataDate) dvDateBadge.textContent = t('dv.cutDate') + ': ' + fmtDate(D.meta.dataDate);
+  if (dvKpiTotal) {
+    dvKpiTotal.textContent = (totalPP >= 0 ? '+' : '') + totalPP.toFixed(2) + ' p.p.';
+    dvKpiTotal.className = 'dv-kpi-val ' + (totalPP < 0 ? 'neg' : 'pos');
+  }
+  if (dvKpiPlan) dvKpiPlan.textContent = pctPlan.toFixed(2) + '%';
+  if (dvKpiReal) dvKpiReal.textContent = pctReal.toFixed(2) + '%';
+  if (dvKpiAreas) dvKpiAreas.textContent = areasNeg.length + ' / ' + areas.length;
+
+  // ── Build area data with desvio_pp and impacto ─────────────────────────────
+  // Previous week's deviation: find last week before currIdx where real > 0 for total
+  const prevIdx = (function() {
+    for (let i = currIdx - 1; i >= 0; i--) {
+      if (D.scurve[i].real != null && D.scurve[i].real > 0) return i;
+    }
+    return -1;
+  })();
+
+  const areaData = areas.map((a, i) => {
+    const desvPP = (a.pctCompReal - a.pctCompPlan) * 100;
+    const impacto = desvPP * a.incidencia; // p.p. × (fraction 0-1) = p.p. contribution
+
+    // Trend: compare current desvio_pp vs prev week
+    let prevDesvPP = desvPP;
+    if (prevIdx >= 0 && a.planSeries && a.realSeries) {
+      const prevPlan = a.planSeries[prevIdx] || 0;
+      const prevReal = a.realSeries[prevIdx] || 0;
+      // Only use prevReal if it had real data
+      if (prevReal > 0) {
+        prevDesvPP = (prevReal - prevPlan) * 100;
+      }
+    }
+    const trend = desvPP > prevDesvPP ? 'up' : desvPP < prevDesvPP ? 'down' : 'neutral';
+
+    return { area: a, desvPP, impacto, trend, color: DV_COLORS[i % DV_COLORS.length] };
+  });
+
+  // Sort by impacto (most negative first)
+  areaData.sort((a, b) => a.impacto - b.impacto);
+
+  // ── Ranking table ──────────────────────────────────────────────────────────
+  const totalImpacto = areaData.reduce((s, d) => s + d.impacto, 0);
+  const totalDesvPP2 = totalRow ? (totalRow.pctCompReal - totalRow.pctCompPlan) * 100 : 0;
+
+  const trendHtml = (trend) => {
+    if (trend === 'up')   return '<span class="dv-trend-up">&#8599;</span>';
+    if (trend === 'down') return '<span class="dv-trend-down">&#8600;</span>';
+    return '<span class="dv-trend-neu">→</span>';
+  };
+
+  const tableRows = areaData.map(d => `<tr>
+    <td class="left" style="max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${d.area.tarea.trim()}">${d.area.tarea.trim()}</td>
+    <td>${(d.area.pctCompPlan * 100).toFixed(1)}%</td>
+    <td>${(d.area.pctCompReal * 100).toFixed(1)}%</td>
+    <td class="${d.desvPP < 0 ? 'dev-neg' : d.desvPP > 0 ? 'dev-pos' : 'dev-neutral'}">${(d.desvPP >= 0 ? '+' : '') + d.desvPP.toFixed(2)}</td>
+    <td>${(d.area.incidencia * 100).toFixed(2)}%</td>
+    <td class="${d.impacto < 0 ? 'dev-neg' : d.impacto > 0 ? 'dev-pos' : 'dev-neutral'}">${(d.impacto >= 0 ? '+' : '') + d.impacto.toFixed(3)}</td>
+    <td>${trendHtml(d.trend)}</td>
+  </tr>`).join('');
+
+  const totalRow2Cls = totalDesvPP2 < 0 ? 'dev-neg' : totalDesvPP2 > 0 ? 'dev-pos' : 'dev-neutral';
+  const totalImpCls  = totalImpacto < 0 ? 'dev-neg' : totalImpacto > 0 ? 'dev-pos' : 'dev-neutral';
+
+  const totalHtml = `<tr class="dv-total-row">
+    <td class="left"><strong>${t('dv.total')}</strong></td>
+    <td><strong>${totalRow ? (totalRow.pctCompPlan * 100).toFixed(1) + '%' : '—'}</strong></td>
+    <td><strong>${totalRow ? (totalRow.pctCompReal * 100).toFixed(1) + '%' : '—'}</strong></td>
+    <td class="${totalRow2Cls}"><strong>${(totalDesvPP2 >= 0 ? '+' : '') + totalDesvPP2.toFixed(2)}</strong></td>
+    <td>—</td>
+    <td class="${totalImpCls}"><strong>${(totalImpacto >= 0 ? '+' : '') + totalImpacto.toFixed(3)}</strong></td>
+    <td>—</td>
+  </tr>`;
+
+  const dvRankingTable = document.getElementById('dvRankingTable');
+  if (dvRankingTable) {
+    dvRankingTable.innerHTML = tableWrap(
+      `<tr>
+        <th class="left">${t('th.area')}</th>
+        <th>${t('th.pctPlan')}</th>
+        <th>${t('th.pctActual')}</th>
+        <th>${t('th.desvPP')}</th>
+        <th>${t('th.incidence')}</th>
+        <th>${t('th.impact')}</th>
+        <th>${t('th.trend')}</th>
+      </tr>`,
+      tableRows + totalHtml
+    );
+  }
+
+  // ── Horizontal bar chart ───────────────────────────────────────────────────
+  const chartLabels = areaData.map(d => d.area.tarea.trim().slice(0, 28));
+  const chartValues = areaData.map(d => +d.impacto.toFixed(4));
+  const chartColors = areaData.map(d => d.color);
+
+  destroyChart('dvImpactChart');
+  const dvImpactCanvas = document.getElementById('dvImpactChart');
+  if (dvImpactCanvas) {
+    const chartHeight = Math.max(180, areaData.length * 38);
+    dvImpactCanvas.parentElement.style.height = chartHeight + 'px';
+
+    charts['dvImpactChart'] = new Chart(dvImpactCanvas, {
+      type: 'bar',
+      data: {
+        labels: chartLabels,
+        datasets: [{
+          label: 'Impacto (p.p.)',
+          data: chartValues,
+          backgroundColor: chartColors,
+          borderRadius: 3,
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.x;
+                return 'Impacto: ' + (v >= 0 ? '+' : '') + v.toFixed(3) + ' p.p.';
+              }
+            }
+          },
+          datalabels: { display: false },
+        },
+        scales: {
+          x: { ticks: { callback: v => (v >= 0 ? '+' : '') + v.toFixed(2) } },
+          y: { ticks: { font: { size: 11 } } }
+        }
+      }
+    });
+
+    const footerEl = document.getElementById('dvImpactFooter');
+    if (footerEl) {
+      footerEl.textContent = 'Impacto total das áreas: ' + (totalImpacto >= 0 ? '+' : '') + totalImpacto.toFixed(3) + ' p.p.';
+    }
+  }
+
+  // ── Evolution line chart ───────────────────────────────────────────────────
+  // Collect scurve weeks with real > 0
+  const validWeekIdxs = D.scurve
+    .map((s, i) => ({ s, i }))
+    .filter(({ s, i }) => i <= currIdx && s.real != null && s.real > 0)
+    .map(({ i }) => i);
+
+  // Build monthly labels: last week of each month gets a label, others empty
+  const monthLabels = validWeekIdxs.map((wi, pos) => {
+    const date = D.scurve[wi].date;
+    if (!date) return D.scurve[wi].week || '';
+    const mo = date.slice(0, 7); // "YYYY-MM"
+    // Is this the last occurrence of this month?
+    const isLast = pos === validWeekIdxs.length - 1 ||
+      D.scurve[validWeekIdxs[pos + 1]].date?.slice(0, 7) !== mo;
+    if (isLast) {
+      const [y, m] = date.split('-');
+      const monthNames = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+      return monthNames[parseInt(m, 10)] + ' ' + y.slice(2);
+    }
+    return '';
+  });
+
+  // Per-area deviation series
+  const evolutionDatasets = areaData.map((d, i) => {
+    const data = validWeekIdxs.map(wi => {
+      const planV = d.area.planSeries?.[wi] || 0;
+      const realV = d.area.realSeries?.[wi] || 0;
+      if (realV <= 0) return null;
+      return +((realV - planV) * 100).toFixed(3);
+    });
+    return {
+      label: d.area.tarea.trim().slice(0, 24),
+      data,
+      borderColor: d.color,
+      backgroundColor: 'transparent',
+      pointRadius: 0,
+      tension: 0.3,
+      borderWidth: 2,
+      spanGaps: false,
+    };
+  });
+
+  // Zero reference line
+  evolutionDatasets.push({
+    label: 'Referencia 0',
+    data: validWeekIdxs.map(() => 0),
+    borderColor: 'rgba(100,116,139,0.4)',
+    backgroundColor: 'transparent',
+    pointRadius: 0,
+    tension: 0,
+    borderWidth: 1,
+    borderDash: [4, 4],
+  });
+
+  destroyChart('dvEvolutionChart');
+  const dvEvoCanvas = document.getElementById('dvEvolutionChart');
+  if (dvEvoCanvas) {
+    charts['dvEvolutionChart'] = new Chart(dvEvoCanvas, {
+      type: 'line',
+      data: { labels: monthLabels, datasets: evolutionDatasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { boxWidth: 10, font: { size: 10 }, padding: 8 }
+          },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.y;
+                if (v == null) return null;
+                return ctx.dataset.label + ': ' + (v >= 0 ? '+' : '') + v.toFixed(2) + ' p.p.';
+              }
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { font: { size: 10 }, maxRotation: 45 } },
+          y: { ticks: { callback: v => (v >= 0 ? '+' : '') + v.toFixed(1) + ' p.p.' } }
+        }
+      }
+    });
+  }
+
+  // ── Status table ──────────────────────────────────────────────────────────
+  const statusRows = areaData.map(d => {
+    let label, cls;
+    if (d.desvPP >= 0) {
+      label = t('dv.onTime'); cls = 'dv-status-ok';
+    } else if (d.trend === 'up') {
+      label = t('dv.recovering'); cls = 'dv-status-rec';
+    } else {
+      label = t('dv.late'); cls = 'dv-status-bad';
+    }
+    return `<tr>
+      <td class="left" title="${d.area.tarea.trim()}">${d.area.tarea.trim().length > 36 ? d.area.tarea.trim().slice(0, 36) + '…' : d.area.tarea.trim()}</td>
+      <td><span class="${cls}">${label}</span></td>
+    </tr>`;
+  }).join('');
+
+  const dvStatusTable = document.getElementById('dvStatusTable');
+  if (dvStatusTable) {
+    dvStatusTable.innerHTML = tableWrap(
+      `<tr><th class="left">${t('th.area')}</th><th>${t('th.situation')}</th></tr>`,
+      statusRows
+    );
+  }
 }
 
 // ── KPIs ──────────────────────────────────────────────────────────────────────
@@ -253,8 +536,10 @@ function renderKPIs() {
   set('metaDate', 'Semana ' + m.dataWeek + '  |  ' + fmtDate(m.dataDate));
 
   const devEl = document.getElementById('kpi-dev');
-  devEl.classList.toggle('kpi-alert', m.desvio < 0);
-  devEl.classList.toggle('positive',  m.desvio >= 0);
+  if (devEl) {
+    devEl.classList.toggle('kpi-alert', m.desvio < 0);
+    devEl.classList.toggle('positive',  m.desvio >= 0);
+  }
 
   const realPts = D.scurve.filter(s => s.real != null && s.real > 0);
   let forecast = '—';
@@ -274,35 +559,36 @@ function renderKPIs() {
 
 // ── Resumen ejecutivo ─────────────────────────────────────────────────────────
 function renderResumen() {
+  if (!document.getElementById('resumenText')) return;
   const m = D.meta;
   const dev = m.desvio;
   const devStr = (dev >= 0 ? '+' : '') + pct(dev);
-  const status = dev < -0.02 ? '<span class="alert">PROYECTO EN RETRASO CRÍTICO</span>'
-               : dev < 0    ? '<span class="alert">Proyecto con retraso</span>'
-               :               '<span class="ok">Proyecto sin atraso</span>';
+  const status = dev < -0.02 ? `<span class="alert">${t('res.critical')}</span>`
+               : dev < 0    ? `<span class="alert">${t('res.delay')}</span>`
+               :               `<span class="ok">${t('res.onTrack')}</span>`;
 
   const areas = D.areas.filter(a => a.nivel === 3 && a.edt !== '4.5.1' && a.edt !== '4.5.9');
   const areaRows = areas.map(a => {
     const d = a.desvPond;
     const cls = d < -0.005 ? 'alert' : d < 0 ? '' : 'ok';
-    return `<span class="${cls}">• ${a.tarea.trim()}: Plan ${pct(a.pctPlan)} / Real ${pct(a.pctReal)} / Desvío ${(d >= 0 ? '+' : '') + pct(d)}</span>`;
+    return `<span class="${cls}">• ${a.tarea.trim()}: ${t('th.pctPlan')} ${pct(a.pctPlan)} / ${t('th.pctActual')} ${pct(a.pctReal)} / ${t('th.deviation')} ${(d >= 0 ? '+' : '') + pct(d)}</span>`;
   }).join('<br>');
 
   document.getElementById('resumenText').innerHTML = `
-    <strong>Proyecto:</strong> LA PAMPINA &nbsp;|&nbsp; <strong>Disciplina:</strong> CONSTRUCCIÓN<br>
-    <strong>Fecha de control:</strong> ${fmtDate(m.dataDate)} (${m.dataWeek})<br>
-    <strong>Período LB:</strong> ${fmtDate(m.startLB)} → ${fmtDate(m.endLB)}<br>
-    <strong>H-H Totales:</strong> ${Math.round(m.totalHH).toLocaleString()} horas-hombre<br>
+    <strong>${t('res.project')}:</strong> LA PAMPINA &nbsp;|&nbsp; <strong>${t('res.discipline')}:</strong> ${t('res.construction')}<br>
+    <strong>${t('res.controlDate')}:</strong> ${fmtDate(m.dataDate)} (${m.dataWeek})<br>
+    <strong>${t('res.lbPeriod')}:</strong> ${fmtDate(m.startLB)} → ${fmtDate(m.endLB)}<br>
+    <strong>${t('res.totalHH')}:</strong> ${Math.round(m.totalHH).toLocaleString()}<br>
     <br>
-    <strong>Situación:</strong> ${status}<br>
-    Avance real: <strong>${pct(m.pctReal)}</strong> vs planeado: <strong>${pct(m.pctPlan)}</strong><br>
-    Desvío acumulado ponderado: <strong>${devStr}</strong><br>
+    <strong>${t('res.situation')}:</strong> ${status}<br>
+    ${t('res.realProg')}: <strong>${pct(m.pctReal)}</strong> ${t('res.vsPlanned')}: <strong>${pct(m.pctPlan)}</strong><br>
+    ${t('res.cumDev')}: <strong>${devStr}</strong><br>
     <br>
-    <strong>Avance por área:</strong><br>
+    <strong>${t('res.areaDetail')}:</strong><br>
     ${areaRows}<br>
     <br>
-    <strong>Actividades sin avance real:</strong> ${m.actSinAvance}<br>
-    <strong>Top desvío:</strong> ${D.topDesvios[0] ? D.topDesvios[0].tarea.trim() + ' (' + pct(D.topDesvios[0].desviacion) + ')' : '—'}
+    <strong>${t('res.noProgressActs')}:</strong> ${m.actSinAvance}<br>
+    <strong>Top ${t('th.deviation')}:</strong> ${D.topDesvios[0] ? D.topDesvios[0].tarea.trim() + ' (' + pct(D.topDesvios[0].desviacion) + ')' : '—'}
   `;
 }
 
@@ -312,11 +598,13 @@ function renderStatusDonut() {
   D.allLeaves.forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; });
   const total = D.allLeaves.length;
 
+  const statusDonutCanvas = document.getElementById('statusDonut');
+  if (!statusDonutCanvas) return;
   destroyChart('statusDonut');
-  charts['statusDonut'] = new Chart(document.getElementById('statusDonut'), {
+  charts['statusDonut'] = new Chart(statusDonutCanvas, {
     type: 'doughnut',
     data: {
-      labels: ['Completada', 'En progreso', 'Atrasada', 'No iniciada'],
+      labels: [t('status.completed'), t('status.inProgress'), t('status.late'), t('status.notStarted')],
       datasets: [{
         data: [counts.completed, counts.inProgress, counts.late, counts.notStarted],
         backgroundColor: ['#00844a','#f0a500','#c00000','#a0a8c0'],
@@ -341,14 +629,16 @@ function renderWeeklyBar() {
   const currIdx = sc.findIndex(s => s.isCurrent);
   const slice = sc.slice(Math.max(0, currIdx - 9), currIdx + 1);
 
+  const weeklyBarCanvas = document.getElementById('weeklyBar');
+  if (!weeklyBarCanvas) return;
   destroyChart('weeklyBar');
-  charts['weeklyBar'] = new Chart(document.getElementById('weeklyBar'), {
+  charts['weeklyBar'] = new Chart(weeklyBarCanvas, {
     type: 'bar',
     data: {
       labels: slice.map(s => s.week),
       datasets: [
-        { label:'% Plan', data: slice.map(s => +(s.plan*100).toFixed(2)), backgroundColor:'rgba(0,84,166,0.7)', borderRadius:3 },
-        { label:'% Real', data: slice.map(s => s.real != null ? +(s.real*100).toFixed(2) : null), backgroundColor:'rgba(0,163,108,0.7)', borderRadius:3 },
+        { label: t('sc.plan'), data: slice.map(s => +(s.plan*100).toFixed(2)), backgroundColor:'rgba(0,84,166,0.7)', borderRadius:3 },
+        { label: t('sc.actual'), data: slice.map(s => s.real != null ? +(s.real*100).toFixed(2) : null), backgroundColor:'rgba(0,163,108,0.7)', borderRadius:3 },
       ]
     },
     options: {
@@ -361,12 +651,14 @@ function renderWeeklyBar() {
 
 // ── Top 5 ─────────────────────────────────────────────────────────────────────
 function renderTop5() {
-  document.getElementById('top5List').innerHTML = D.topDesvios.slice(0, 5).map((r, i) => `
+  const top5El = document.getElementById('top5List');
+  if (!top5El) return;
+  top5El.innerHTML = D.topDesvios.slice(0, 5).map((r, i) => `
     <div class="top5-item">
       <span class="top5-rank">${i+1}</span>
       <div class="top5-info">
         <div class="top5-name">${r.tarea.trim().length > 44 ? r.tarea.trim().slice(0,44)+'…' : r.tarea.trim()}</div>
-        <div class="top5-meta">${r.edt} · incid. ${pct(r.incidencia,3)}</div>
+        <div class="top5-meta">${r.edt} · ${t('res.incid')} ${pct(r.incidencia,3)}</div>
       </div>
       <span class="top5-dev dev-neg">${signPct(r.desviacion)}</span>
     </div>
@@ -375,18 +667,20 @@ function renderTop5() {
 
 // ── Area bar chart ────────────────────────────────────────────────────────────
 function renderAreaChart() {
+  const canvas = document.getElementById('areaChart');
+  if (!canvas) return;
   const areas = D.areas.filter(a => a.nivel===3 && a.incidencia > 0.001);
   const plan  = areas.map(a => +(a.pctPlan*100).toFixed(2));
   const real  = areas.map(a => +(a.pctReal*100).toFixed(2));
 
   destroyChart('areaChart');
-  charts['areaChart'] = new Chart(document.getElementById('areaChart'), {
+  charts['areaChart'] = new Chart(canvas, {
     type: 'bar',
     data: {
       labels: areas.map(a => a.tarea.trim()),
       datasets: [
-        { label:'% Plan', data:plan, backgroundColor:'rgba(0,84,166,0.7)', borderRadius:3 },
-        { label:'% Real', data:real, backgroundColor:'rgba(0,163,108,0.7)', borderRadius:3 },
+        { label: t('sc.plan'), data:plan, backgroundColor:'rgba(0,84,166,0.7)', borderRadius:3 },
+        { label: t('sc.actual'), data:real, backgroundColor:'rgba(0,163,108,0.7)', borderRadius:3 },
       ]
     },
     options: {
@@ -406,7 +700,7 @@ function _scurveChartConfig(labels, planData, realData) {
       labels,
       datasets: [
         {
-          label: '% Planeado',
+          label: t('sc.plan'),
           data: planData,
           borderColor: '#0054a6',
           backgroundColor: 'rgba(0,84,166,.07)',
@@ -414,7 +708,7 @@ function _scurveChartConfig(labels, planData, realData) {
           yAxisID: 'y'
         },
         {
-          label: '% Real',
+          label: t('sc.actual'),
           data: realData,
           borderColor: '#00a36c',
           backgroundColor: 'transparent',
@@ -445,7 +739,7 @@ function _scurveChartConfig(labels, planData, realData) {
               // Only show when both plan and real exist at this point
               if (p == null || r == null) return [];
               const dev = +(r - p).toFixed(2);
-              return ['Desvío: ' + (dev >= 0 ? '+' : '') + dev.toFixed(2) + '%'];
+              return [t('th.deviation') + ': ' + (dev >= 0 ? '+' : '') + dev.toFixed(2) + '%'];
             }
           },
           footerColor: '#d97706',
@@ -461,6 +755,7 @@ function _scurveChartConfig(labels, planData, realData) {
 
 // ── S-Curve ───────────────────────────────────────────────────────────────────
 function renderScurve() {
+  if (!document.getElementById('scurveChart')) return;
   const sc = D.scurve;
   const slice = sc;
 
@@ -527,6 +822,7 @@ function _scurveLeavesForEdt(filtEdt) {
 // ── S-Curve filtered ─────────────────────────────────────────────────────────
 function renderScurveFiltered() {
   if (!D) return;
+  if (!document.getElementById('scurveFilteredChart')) return;
 
   const filtEdt  = _scurveFilterEdt;
   const leaves   = _scurveLeavesForEdt(filtEdt);
@@ -537,9 +833,9 @@ function renderScurveFiltered() {
     ? (_consolTree?.find(r => r.edt === filtEdt)?.tarea?.trim()
         || D.allRecords.find(r => r.edt === filtEdt)?.tarea?.trim()
         || filtEdt)
-    : 'Total proyecto';
+    : t('dv.total');
   const labelEl = document.getElementById('scurveFilterLabel');
-  if (labelEl) labelEl.textContent = 'Área: ' + filtLabel;
+  if (labelEl) labelEl.textContent = (filtEdt ? t('th.area') + ': ' : '') + filtLabel;
 
   if (!totalInc || !leaves.length) {
     destroyChart('scurveFilteredChart');
@@ -651,7 +947,7 @@ function _addScurveCascadeSelect(wrap, parentEdt) {
 
   const sel = document.createElement('select');
   sel.className = 'cascade-sel';
-  sel.innerHTML = `<option value="">— Todas —</option>`
+  sel.innerHTML = `<option value="">${t('cr.allAreas')}</option>`
     + items.map(r => `<option value="${r.edt}">${r.tarea.trim()}</option>`).join('');
 
   wrap.appendChild(sel);
@@ -680,14 +976,16 @@ function renderAreasBar() {
   const n = parseInt(document.getElementById('areaLvlBox')?.value || '3');
   const rows = D.areas.filter(a => a.nivel === n);
 
+  const areasBarCanvas = document.getElementById('areasBarChart');
+  if (!areasBarCanvas) return;
   destroyChart('areasBarChart');
-  charts['areasBarChart'] = new Chart(document.getElementById('areasBarChart'), {
+  charts['areasBarChart'] = new Chart(areasBarCanvas, {
     type: 'bar',
     data: {
       labels: rows.map(a => a.tarea.trim().slice(0,35)),
       datasets: [
-        { label:'% Plan Pond.', data: rows.map(a => +(a.pctPlan*100).toFixed(2)), backgroundColor:'rgba(0,84,166,0.7)', borderRadius:3 },
-        { label:'% Real Pond.', data: rows.map(a => +(a.pctReal*100).toFixed(2)), backgroundColor:'rgba(0,163,108,0.7)', borderRadius:3 },
+        { label: t('ar.plan'), data: rows.map(a => +(a.pctPlan*100).toFixed(2)), backgroundColor:'rgba(0,84,166,0.7)', borderRadius:3 },
+        { label: t('ar.actual'), data: rows.map(a => +(a.pctReal*100).toFixed(2)), backgroundColor:'rgba(0,163,108,0.7)', borderRadius:3 },
       ]
     },
     options: {
@@ -699,14 +997,16 @@ function renderAreasBar() {
 }
 
 function renderAreasTable() {
+  const areasTableEl = document.getElementById('areasTable');
+  if (!areasTableEl) return;
   const n = parseInt(document.getElementById('areaLvlBox')?.value || '3');
   const rows = D.areas.filter(a => a.nivel === n);
 
-  document.getElementById('areasTable').innerHTML = tableWrap(
+  areasTableEl.innerHTML = tableWrap(
     `<tr>
-      <th class="left">Área / Grupo</th><th>EDT</th><th>Inicio LB</th><th>Fin LB</th>
-      <th>H-H</th><th>Incidencia</th><th>% Plan Pond.</th><th>% Real Pond.</th>
-      <th>Desvío Pond.</th><th>% Comp. Plan</th><th>% Comp. Real</th><th>Status</th>
+      <th class="left">${t('th.areaGroup')}</th><th>${t('th.edt')}</th><th>${t('th.start')}</th><th>${t('th.end')}</th>
+      <th>${t('th.hh')}</th><th>${t('th.incidence')}</th><th>${t('th.pctPlanPond')}</th><th>${t('th.pctRealPond')}</th>
+      <th>${t('th.desvPond')}</th><th>${t('th.pctCompPlan')}</th><th>${t('th.pctCompReal')}</th><th>${t('th.status')}</th>
     </tr>`,
     rows.map(r => `<tr>
       <td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
@@ -722,15 +1022,17 @@ function renderAreasTable() {
 
 // ── Top Desvios Bar + Table ───────────────────────────────────────────────────
 function renderDesviosBar(rows) {
+  const canvas = document.getElementById('desviosBarChart');
+  if (!canvas) return;
   const top  = rows.slice(0,15);
   const vals = top.map(r => +(r.desviacion*100).toFixed(2));
 
   destroyChart('desviosBarChart');
-  charts['desviosBarChart'] = new Chart(document.getElementById('desviosBarChart'), {
+  charts['desviosBarChart'] = new Chart(canvas, {
     type:'bar',
     data: {
       labels: top.map(r => r.edt),
-      datasets:[{ label:'Desvío (%)', data:vals,
+      datasets:[{ label: t('th.deviation') + ' (%)', data:vals,
         backgroundColor: vals.map(v => v<0 ? 'rgba(192,0,0,0.7)' : 'rgba(0,132,74,0.7)'),
         borderRadius:3 }]
     },
@@ -748,9 +1050,11 @@ function renderDesviosBar(rows) {
 }
 
 function renderDesviosTable(rows) {
-  document.getElementById('desviosTable').innerHTML = tableWrap(
-    `<tr><th>#</th><th class="left">Actividad</th><th>EDT</th><th>Inicio LB</th><th>Fin LB</th>
-     <th>H-H</th><th>Incidencia</th><th>% Plan</th><th>% Real</th><th>Desvío</th></tr>`,
+  const el = document.getElementById('desviosTable');
+  if (!el) return;
+  el.innerHTML = tableWrap(
+    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.start')}</th><th>${t('th.end')}</th>
+     <th>${t('th.hh')}</th><th>${t('th.incidence')}</th><th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>${t('th.deviation')}</th></tr>`,
     rows.map((r,i) => `<tr>
       <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
       <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
@@ -763,15 +1067,17 @@ function renderDesviosTable(rows) {
 
 // ── Críticas Bar + Table ──────────────────────────────────────────────────────
 function renderCriticasBar(rows) {
+  const criticasBarCanvas = document.getElementById('criticasBarChart');
+  if (!criticasBarCanvas) return;
   const top = rows.slice(0,15);
   destroyChart('criticasBarChart');
-  charts['criticasBarChart'] = new Chart(document.getElementById('criticasBarChart'), {
+  charts['criticasBarChart'] = new Chart(criticasBarCanvas, {
     type:'bar',
     data: {
       labels: top.map(r => r.edt),
       datasets:[
-        { label:'% Plan', data: top.map(r => +(r.pctCompPlan*100).toFixed(1)), backgroundColor:'rgba(0,84,166,0.6)', borderRadius:3 },
-        { label:'% Real', data: top.map(r => +(r.pctCompReal*100).toFixed(1)), backgroundColor:'rgba(192,0,0,0.65)', borderRadius:3 },
+        { label: t('cr.plan'), data: top.map(r => +(r.pctCompPlan*100).toFixed(1)), backgroundColor:'rgba(0,84,166,0.6)', borderRadius:3 },
+        { label: t('cr.actual'), data: top.map(r => +(r.pctCompReal*100).toFixed(1)), backgroundColor:'rgba(192,0,0,0.65)', borderRadius:3 },
       ]
     },
     options: {
@@ -785,9 +1091,11 @@ function renderCriticasBar(rows) {
 }
 
 function renderCriticasTable(rows) {
-  document.getElementById('criticasTable').innerHTML = tableWrap(
-    `<tr><th>#</th><th class="left">Actividad</th><th>EDT</th><th>Inicio LB</th><th>Fin LB</th>
-     <th>H-H</th><th>Incidencia</th><th>% Plan</th><th>% Real</th><th>Desvío</th><th>Impacto Pond.</th></tr>`,
+  const criticasTableEl = document.getElementById('criticasTable');
+  if (!criticasTableEl) return;
+  criticasTableEl.innerHTML = tableWrap(
+    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.start')}</th><th>${t('th.end')}</th>
+     <th>${t('th.hh')}</th><th>${t('th.incidence')}</th><th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>${t('th.deviation')}</th><th>${t('th.impactPond')}</th></tr>`,
     rows.map((r,i) => `<tr>
       <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
       <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
@@ -814,21 +1122,26 @@ function renderSinAvanceCharts(rows) {
   const labels = keys.map(k => areaNames[k] || k);
   const colors = ['#c00000','#e68a00','#0054a6','#6a0dad','#00844a','#008080','#888'];
 
-  destroyChart('sinAvanceDonut');
-  charts['sinAvanceDonut'] = new Chart(document.getElementById('sinAvanceDonut'), {
-    type:'doughnut',
-    data:{ labels, datasets:[{ data: keys.map(k=>byCount[k]),
-      backgroundColor: colors.slice(0,keys.length), borderWidth:2, borderColor:'#fff' }] },
-    options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ position:'right', labels:{ font:{size:11}, padding:8 } } } }
-  });
+  const sinAvanceDonutCanvas = document.getElementById('sinAvanceDonut');
+  if (sinAvanceDonutCanvas) {
+    destroyChart('sinAvanceDonut');
+    charts['sinAvanceDonut'] = new Chart(sinAvanceDonutCanvas, {
+      type:'doughnut',
+      data:{ labels, datasets:[{ data: keys.map(k=>byCount[k]),
+        backgroundColor: colors.slice(0,keys.length), borderWidth:2, borderColor:'#fff' }] },
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ position:'right', labels:{ font:{size:11}, padding:8 } } } }
+    });
+  }
 
   const hhEntries = Object.entries(byHH).sort((a,b) => b[1]-a[1]);
+  const sinAvanceHHBarCanvas = document.getElementById('sinAvanceHHBar');
+  if (!sinAvanceHHBarCanvas) return;
   destroyChart('sinAvanceHHBar');
-  charts['sinAvanceHHBar'] = new Chart(document.getElementById('sinAvanceHHBar'), {
+  charts['sinAvanceHHBar'] = new Chart(sinAvanceHHBarCanvas, {
     type:'bar',
     data:{ labels: hhEntries.map(([k]) => areaNames[k]||k),
-      datasets:[{ label:'H-H sin avance', data: hhEntries.map(([,v]) => Math.round(v)),
+      datasets:[{ label: t('sin.hhDataset'), data: hhEntries.map(([,v]) => Math.round(v)),
         backgroundColor:'rgba(192,0,0,0.65)', borderRadius:3 }] },
     options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{display:false} },
@@ -837,9 +1150,11 @@ function renderSinAvanceCharts(rows) {
 }
 
 function renderSinAvanceTable(rows) {
-  document.getElementById('sinAvanceTable').innerHTML = tableWrap(
-    `<tr><th>#</th><th class="left">Actividad</th><th>EDT</th><th>Inicio LB</th><th>Fin LB</th>
-     <th>H-H</th><th>Incidencia</th><th>% Plan</th><th>% Real</th></tr>`,
+  const sinAvanceTableEl = document.getElementById('sinAvanceTable');
+  if (!sinAvanceTableEl) return;
+  sinAvanceTableEl.innerHTML = tableWrap(
+    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.start')}</th><th>${t('th.end')}</th>
+     <th>${t('th.hh')}</th><th>${t('th.incidence')}</th><th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th></tr>`,
     rows.map((r,i) => `<tr>
       <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
       <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
@@ -851,12 +1166,14 @@ function renderSinAvanceTable(rows) {
 
 // ── Ranking Bar + Table ───────────────────────────────────────────────────────
 function renderRankingBar(rows) {
+  const rankingBarCanvas = document.getElementById('rankingBarChart');
+  if (!rankingBarCanvas) return;
   const vals = rows.map(r => +(Math.abs(r.desvPond)*100).toFixed(3));
   destroyChart('rankingBarChart');
-  charts['rankingBarChart'] = new Chart(document.getElementById('rankingBarChart'), {
+  charts['rankingBarChart'] = new Chart(rankingBarCanvas, {
     type:'bar',
     data:{ labels: rows.map(r => r.edt),
-      datasets:[{ label:'Impacto Ponderado (%)', data:vals,
+      datasets:[{ label: t('rk.dataset'), data:vals,
         backgroundColor: vals.map(v => v>0.5?'rgba(192,0,0,0.7)':v>0.2?'rgba(230,138,0,0.7)':'rgba(0,84,166,0.6)'),
         borderRadius:3 }]
     },
@@ -874,14 +1191,16 @@ function renderRankingBar(rows) {
 }
 
 function renderRankingTable(rows) {
-  document.getElementById('rankingTable').innerHTML = tableWrap(
-    `<tr><th>#</th><th class="left">Actividad</th><th>EDT</th><th>H-H</th>
-     <th>Incidencia</th><th>% Plan Pond.</th><th>% Real Pond.</th><th>Impacto Pond.</th>
-     <th>% Plan</th><th>% Real</th><th>Clasif.</th></tr>`,
+  const rankingTableEl = document.getElementById('rankingTable');
+  if (!rankingTableEl) return;
+  rankingTableEl.innerHTML = tableWrap(
+    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.hh')}</th>
+     <th>${t('th.incidence')}</th><th>${t('th.pctPlanPond')}</th><th>${t('th.pctRealPond')}</th><th>${t('th.impactPond')}</th>
+     <th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>${t('th.clasif')}</th></tr>`,
     rows.map((r,i) => {
       const imp = Math.abs(r.desvPond);
       const cls = imp>0.005?'badge badge-crit':imp>0.002?'badge badge-late':imp>0.0005?'badge badge-warn':'badge badge-ok';
-      const lbl = imp>0.005?'CRITICO':imp>0.002?'ALTO':imp>0.0005?'MEDIO':'BAJO';
+      const lbl = imp>0.005?t('rank.crit'):imp>0.002?t('rank.high'):imp>0.0005?t('rank.mid'):t('rank.low');
       return `<tr>
         <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
         <td>${Math.round(r.hh).toLocaleString()}</td><td>${pct(r.incidencia,4)}</td>
@@ -1327,7 +1646,7 @@ function buildArbolRow(r, edtsWithChildren, hidden) {
   const hidCls = hidden ? ' tree-hidden' : '';
 
   const toggleBtn = hasKids
-    ? `<button class="tree-toggle" data-edt="${r.edt}" title="${isColl ? 'Expandir' : 'Colapsar'}">${isColl ? '▶' : '▼'}</button>`
+    ? `<button class="tree-toggle" data-edt="${r.edt}" title="${isColl ? t('wb.toggleExpand') : t('wb.toggleCollapse')}">${isColl ? '▶' : '▼'}</button>`
     : `<span class="tree-no-toggle"></span>`;
 
   // Columns: EDT | Actividad | H-H | PBs | PB Plan. | PB Av. | PB Dev. | Incid. | INCD.PLAN | INCD.REAL | % Plan | % Real | Desvío | Status
@@ -1490,7 +1809,7 @@ function _addCascadeSelect(wrap, parentEdt) {
 
   const sel = document.createElement('select');
   sel.className = 'cascade-sel';
-  sel.innerHTML = `<option value="">— Todas —</option>`
+  sel.innerHTML = `<option value="">${t('cr.allAreas')}</option>`
     + items.map(r => `<option value="${r.edt}">${r.tarea.trim()}</option>`).join('');
 
   wrap.appendChild(sel);
@@ -1543,9 +1862,11 @@ function setupArbol() {
 
 // ── Future ────────────────────────────────────────────────────────────────────
 function renderFuture() {
-  document.getElementById('futureTable').innerHTML = tableWrap(
-    `<tr><th>#</th><th class="left">Actividad</th><th>EDT</th>
-     <th>H-H</th><th>Incidencia</th><th>% Real actual</th><th>% Recuperable</th><th>Fin LB</th></tr>`,
+  const futureTableEl = document.getElementById('futureTable');
+  if (!futureTableEl) return;
+  futureTableEl.innerHTML = tableWrap(
+    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th>
+     <th>${t('th.hh')}</th><th>${t('th.incidence')}</th><th>${t('th.pctActualCur')}</th><th>${t('th.pctRecoverable')}</th><th>${t('th.end')}</th></tr>`,
     D.future.map((r,i) => {
       const rec = r.incidencia*(1-r.pctCompReal);
       return `<tr>
@@ -1561,18 +1882,20 @@ function renderFuture() {
 // ── Tabla ─────────────────────────────────────────────────────────────────────
 let tablaRows = [];
 function renderTabla(filtered) {
+  const tablaWrapEl = document.getElementById('tablaWrap');
+  if (!tablaWrapEl) return;
   tablaRows = filtered || D.allLeaves;
 
   const areaBox = document.getElementById('areaBox');
-  if (areaBox.options.length === 1) {
+  if (areaBox && areaBox.options.length === 1) {
     [...new Set(D.allLeaves.map(r => r.edt.split('.').slice(0,2).join('.')))].sort()
       .forEach(g => areaBox.appendChild(new Option(g, g)));
   }
 
-  document.getElementById('tablaWrap').innerHTML = tableWrap(
-    `<tr><th>#</th><th class="left">Actividad</th><th>EDT</th><th>Dur.</th>
-     <th>Inicio LB</th><th>Fin LB</th><th>H-H</th><th>Incidencia</th>
-     <th>% Plan</th><th>% Real</th><th>Desvío</th><th>Status</th></tr>`,
+  tablaWrapEl.innerHTML = tableWrap(
+    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.duration')}</th>
+     <th>${t('th.start')}</th><th>${t('th.end')}</th><th>${t('th.hh')}</th><th>${t('th.incidence')}</th>
+     <th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>${t('th.deviation')}</th><th>${t('th.status')}</th></tr>`,
     tablaRows.map((r,i) => `<tr>
       <td>${i+1}</td><td class="left">${r.tarea.trim()}</td>
       <td>${r.edt}</td><td>${r.duracion}</td>
@@ -1593,7 +1916,7 @@ function populateAreaDropdowns() {
     .map(([k,v]) => `<option value="${k}">${k} — ${v}</option>`).join('');
   ['desvAreaBox','critAreaBox','sinAreaBox','rankAreaBox'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.innerHTML = '<option value="">— Todas las áreas —</option>' + opts;
+    if (el) el.innerHTML = `<option value="">${t('cr.allAreas')}</option>` + opts;
   });
 }
 
@@ -1677,7 +2000,7 @@ function applyFilters() {
 }
 
 function exportCsv() {
-  const hdr = ['EDT','Actividad','Duracion','Inicio LB','Fin LB','HH','Incidencia','Plan%','Real%','Desvio','Status'];
+  const hdr = [t('th.edt'),t('th.activity'),t('th.duration'),t('th.start'),t('th.end'),t('th.hh'),t('th.incidence'),t('th.pctPlan'),t('th.pctActual'),t('th.deviation'),t('th.status')];
   const lines = [hdr.join(','), ...tablaRows.map(r =>
     [r.edt, `"${r.tarea.trim()}"`, r.duracion, r.inicio, r.fin,
      r.hh.toFixed(0), r.incidencia.toFixed(6),
@@ -1765,7 +2088,7 @@ function _simTabPopulateActSelect() {
   if (!sel || !D) return;
   const added = new Set(_simTabRows.map(r => r.edt));
   const leaves = _simTabGetLeaves().filter(r => !added.has(r.edt));
-  sel.innerHTML = `<option value="">Selecione uma atividade</option>`
+  sel.innerHTML = `<option value="">${t('sim.selectAct')}</option>`
     + leaves.map(r => {
       const tag = r.isConsolidated ? ` [PB×${r.pbTotal}]` : ' [Reg]';
       return `<option value="${r.edt}">${r.tarea.trim()}${tag}</option>`;
@@ -1797,7 +2120,7 @@ function initSimTab() {
   const scopeSel = document.getElementById('simtabScope');
   if (scopeSel) {
     const tops = D.allRecords.filter(r => r.resumen && r.edt.split('.').length === 3);
-    scopeSel.innerHTML = `<option value="">— Todo el proyecto —</option>`
+    scopeSel.innerHTML = `<option value="">${t('sim.allProject')}</option>`
       + tops.map(r => `<option value="${r.edt}">${r.tarea.trim()}</option>`).join('');
   }
   _simTabPopulateActSelect();
@@ -1885,7 +2208,7 @@ function _renderSimTabTable() {
   if (!wrap) return;
 
   if (_simTabRows.length === 0) {
-    wrap.innerHTML = '<p class="subtitle" style="padding:12px 0">Nenhuma atividade adicionada. Use o formulário acima para adicionar.</p>';
+    wrap.innerHTML = `<p class="subtitle" style="padding:12px 0">${t('sim.noActs')}</p>`;
     return;
   }
 
@@ -1921,29 +2244,29 @@ function _renderSimTabTable() {
           <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
           <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
         </svg>
-        Remover
+        ${t('sim.remove')}
       </button></td>
     </tr>`;
   }).join('');
 
   wrap.innerHTML = tableWrap(
     `<tr>
-       <th class="left">Atividade</th>
-       <th>Tipo</th>
-       <th title="Total Power Blocks">PB Total</th>
-       <th title="PBs com avanço real">PB Executados Atual</th>
-       <th title="PBs planejados até o corte">PB Planejados até o corte</th>
-       <th>PB Simulados (Adicionais)</th>
-       <th>% Real Atual</th>
-       <th>% Real Simulado</th>
-       <th>Recuperação (p.p.)</th>
-       <th>Impacto no Desvio (p.p.)</th>
-       <th>Ação</th>
+       <th class="left">${t('sim.th.activity')}</th>
+       <th>${t('sim.th.type')}</th>
+       <th>${t('sim.th.pbTotal')}</th>
+       <th>${t('sim.th.pbExec')}</th>
+       <th>${t('sim.th.pbPlan')}</th>
+       <th>${t('sim.th.pbSim')}</th>
+       <th>${t('sim.th.pctReal')}</th>
+       <th>${t('sim.th.pctSimReal')}</th>
+       <th>${t('sim.th.recovery')}</th>
+       <th>${t('sim.th.impact')}</th>
+       <th>${t('sim.th.action')}</th>
      </tr>`,
     rowsHtml +
     `<tr class="simtab-total-row">
        <td colspan="8" class="right" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em">
-         TOTAL DE RECUPERAÇÃO DO CENÁRIO (p.p.)</td>
+         ${t('sim.totalRow')}</td>
        <td colspan="2" class="${totCls} simtab-res-cell" id="simtab-total-rec"
            style="font-size:15px;font-weight:800">${_ppFmt(totalRec)}</td>
        <td></td>
@@ -1971,6 +2294,7 @@ function _renderSimTabTable() {
 
 function _renderSimTabChart() {
   if (!D) return;
+  if (!document.getElementById('simtabChart')) return;
   const totalRec  = _simTabTotalRecovery();
   const sc        = D.scurve;
   const currIdx   = sc.findIndex(s => s.isCurrent);
@@ -1992,16 +2316,16 @@ function _renderSimTabChart() {
     data: {
       labels: slice.map(s => s.week),
       datasets: [
-        { label: 'Planejado',
+        { label: t('sim.planDs'),
           data: planData,
           borderColor: '#2563eb', backgroundColor: 'transparent',
           pointRadius: 0, fill: false, tension: 0.3, borderWidth: 2 },
-        { label: 'Real',
+        { label: t('sim.actualDs'),
           data: realData,
           borderColor: '#16a34a', backgroundColor: 'transparent',
           pointRadius: ctx => ctx.dataIndex === lastRealI ? 5 : 0,
           fill: false, tension: 0.3, borderWidth: 2.5, spanGaps: false },
-        { label: 'Simulado',
+        { label: t('sim.simDs'),
           data: simData,
           borderColor: '#16a34a', backgroundColor: 'transparent',
           borderDash: [6, 4],
@@ -2309,13 +2633,19 @@ function setupScenarios() {
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function setupTabs() {
-  document.querySelectorAll('.tab').forEach(btn => {
+  document.querySelectorAll('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById('tab-' + btn.dataset.tab)?.classList.add('active');
     });
+  });
+
+  // Sidebar toggle (expand / collapse)
+  const sidebar = document.getElementById('sidebar');
+  document.getElementById('sidebarToggle')?.addEventListener('click', () => {
+    sidebar?.classList.toggle('collapsed');
   });
 }
 
@@ -2332,10 +2662,11 @@ function fmtDate(iso) {
 }
 function devClass(v) { return v==null?'dev-neutral':v<-0.001?'dev-neg':v>0.001?'dev-pos':'dev-neutral'; }
 function statusBadge(r) {
-  const map = { completed:['badge-completed','Completada'], inProgress:['badge-inProgress','En progreso'],
-                late:['badge-late','Atrasada'], notStarted:['badge-notStarted','No iniciada'] };
-  const [cls,lbl] = map[r.status] || ['badge-notStarted','—'];
-  return `<span class="badge ${cls}">${lbl}</span>`;
+  const cls = { completed:'badge-completed', inProgress:'badge-inProgress',
+                late:'badge-late', notStarted:'badge-notStarted' };
+  const key = { completed:'status.completed', inProgress:'status.inProgress',
+                late:'status.late', notStarted:'status.notStarted' };
+  return `<span class="badge ${cls[r.status]||'badge-notStarted'}">${t(key[r.status]||'status.notStarted')}</span>`;
 }
 function pbarDuo(plan, real) {
   return `<div class="pbar-wrap">
@@ -2355,4 +2686,424 @@ function showToast(msg, isError = false, ms = 3500) {
   el.classList.remove('hidden');
   clearTimeout(toastTimer);
   if (ms < 60000) toastTimer = setTimeout(() => el.classList.add('hidden'), ms);
+}
+
+// ── PDF Export ────────────────────────────────────────────────────────────────
+function setupPdfExports() {
+  on('scurvePdfBtn',            'click', exportScurvePDF);
+  on('cronogramaPdfBtn',        'click', () => _exportCronogramaPDFBase(false));
+  on('cronogramaPdfBtnResumido','click', () => _exportCronogramaPDFBase(true));
+}
+
+/** Draw a branded header bar; returns the Y coordinate below it (mm). */
+function _pdfHeader(doc, title, pageW, margin) {
+  doc.setFillColor(0, 57, 115);
+  doc.rect(0, 0, pageW, 19, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text('PowerChina · La Pampina', margin, 7.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  doc.text(title, margin, 14);
+  doc.setTextColor(0, 0, 0);
+  return 23;
+}
+
+/** Print one line of project metadata (date / % plan / % real / deviation). */
+function _pdfMeta(doc, y, margin, pageW) {
+  if (typeof D === 'undefined' || !D || !D.meta) return y;
+  const m = D.meta;
+  const dev = m.pctReal - m.pctPlan;
+  const parts = [
+    t('res.controlDate') + ': ' + fmtDate(m.dataDate) + ' (' + m.dataWeek + ')',
+    t('kpi.planned')   + ': ' + pct(m.pctPlan),
+    t('kpi.actual')    + ': ' + pct(m.pctReal),
+    t('kpi.deviation') + ': ' + signPct(dev),
+  ];
+  doc.setFontSize(7.5);
+  doc.setTextColor(80, 80, 80);
+  doc.text(parts.join('   |   '), margin, y);
+  // Divider line
+  doc.setDrawColor(200, 200, 200);
+  doc.line(margin, y + 2.5, pageW - margin, y + 2.5);
+  doc.setTextColor(0, 0, 0);
+  return y + 7;
+}
+
+/** Add page-number footer to every page. */
+function _pdfPageNumbers(doc, pageW, pageH, margin) {
+  const n = doc.internal.getNumberOfPages();
+  const prefix = t('pdf.page');
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7.5);
+    doc.setTextColor(160, 160, 160);
+    doc.text(`${prefix} ${i} / ${n}`, pageW - margin, pageH - 4, { align: 'right' });
+    doc.text('PowerChina · La Pampina', margin, pageH - 4);
+  }
+}
+
+/** Export both S-Curves (main + filtered) to a landscape A4 PDF. */
+async function exportScurvePDF() {
+  if (!window.jspdf) {
+    showToast('jsPDF not available — check CDN connection', true);
+    return;
+  }
+  const btn = document.getElementById('scurvePdfBtn');
+  if (btn) { btn.disabled = true; }
+  showToast(t('pdf.generating'), false, 60000);
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc   = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 12;
+
+    // ── Page 1: main S-curve ──────────────────────────────────────────────────
+    let y = _pdfHeader(doc, t('pdf.scurve'), pageW, margin);
+    y     = _pdfMeta(doc, y, margin, pageW);
+
+    const mainCanvas = document.getElementById('scurveChart');
+    if (mainCanvas && mainCanvas.width && mainCanvas.height) {
+      const imgW  = pageW - 2 * margin;
+      const imgH  = imgW * (mainCanvas.height / mainCanvas.width);
+      const maxH  = pageH - y - margin - 8;
+      doc.addImage(mainCanvas.toDataURL('image/png'), 'PNG', margin, y, imgW, Math.min(imgH, maxH));
+    }
+
+    // ── Page 2: filtered S-curve ──────────────────────────────────────────────
+    const filtCanvas = document.getElementById('scurveFilteredChart');
+    if (filtCanvas && filtCanvas.width && filtCanvas.height) {
+      doc.addPage();
+      y = _pdfHeader(doc, t('sc.filteredTitle'), pageW, margin);
+      y = _pdfMeta(doc, y, margin, pageW);
+
+      // Filter label
+      const labelEl = document.getElementById('scurveFilterLabel');
+      if (labelEl && labelEl.textContent.trim()) {
+        doc.setFontSize(8.5);
+        doc.setTextColor(80, 80, 80);
+        doc.text(labelEl.textContent.trim(), margin, y);
+        y += 6;
+        doc.setTextColor(0, 0, 0);
+      }
+
+      const imgW  = pageW - 2 * margin;
+      const imgH  = imgW * (filtCanvas.height / filtCanvas.width);
+      const maxH  = pageH - y - margin - 8;
+      doc.addImage(filtCanvas.toDataURL('image/png'), 'PNG', margin, y, imgW, Math.min(imgH, maxH));
+    }
+
+    _pdfPageNumbers(doc, pageW, pageH, margin);
+    doc.save('CurvaS_LaPampina.pdf');
+    showToast(t('pdf.success'));
+
+  } catch (err) {
+    console.error('[exportScurvePDF]', err);
+    showToast(t('toast.error') + err.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; }
+  }
+}
+
+/**
+ * DETAILED — all rows matching the current cascade + search filters,
+ * expand/collapse state is ignored (PDF shows every record).
+ */
+function _getArbolPdfRows() {
+  if (!D) return [];
+  const q       = (document.getElementById('arbolSearch')?.value || '').toLowerCase().trim();
+  const allRecs = (_consolTree || D.allRecords).filter(r => r.edt);
+
+  if (q) {
+    return allRecs.filter(r =>
+      r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)
+    );
+  }
+  if (_wbsFilterEdt) {
+    return allRecs.filter(r =>
+      r.edt === _wbsFilterEdt || r.edt.startsWith(_wbsFilterEdt + '.')
+    );
+  }
+  return allRecs;
+}
+
+/**
+ * SUMMARY — only the rows that are currently VISIBLE in the collapsed tree,
+ * i.e. same result as what the user sees on screen right now.
+ * Applies cascade filter + search + collapsedNodes (via isArbolHidden).
+ */
+/**
+ * SUMMARY — only parent/summary rows (resumen === true or isVirtual).
+ * No leaf activities. Gives a compact project-structure overview.
+ * Respects cascade area filter and search text.
+ */
+function _getArbolResumidasRows() {
+  if (!D) return [];
+  const q       = (document.getElementById('arbolSearch')?.value || '').toLowerCase().trim();
+  const allRecs = (_consolTree || D.allRecords).filter(r => r.edt);
+
+  // Keep only parent/summary nodes
+  const parents = allRecs.filter(r => r.resumen || r.isVirtual);
+
+  // Apply cascade filter
+  const inScope = _wbsFilterEdt
+    ? parents.filter(r => r.edt === _wbsFilterEdt || r.edt.startsWith(_wbsFilterEdt + '.'))
+    : parents;
+
+  // Apply search filter (if active)
+  if (q) {
+    return inScope.filter(r =>
+      r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)
+    );
+  }
+
+  return inScope;
+}
+
+/** Export the WBS Cronograma as a data-driven table PDF (no screenshot).
+ *  @param {boolean} summarized  true → only visible (collapsed) rows; false → all rows
+ */
+function _exportCronogramaPDFBase(summarized) {
+  if (!window.jspdf) {
+    showToast('jsPDF not available — check CDN connection', true);
+    return;
+  }
+  if (!D) {
+    showToast(t('toast.error') + 'Sem dados carregados', true);
+    return;
+  }
+  const btnId  = summarized ? 'cronogramaPdfBtnResumido' : 'cronogramaPdfBtn';
+  const btn    = document.getElementById(btnId);
+  if (btn) btn.disabled = true;
+  showToast(t('pdf.generating'), false, 60000);
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc   = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();   // 297 mm
+    const pageH = doc.internal.pageSize.getHeight();  // 210 mm
+    const ML    = 10;   // left/right margin
+
+    // ── Título muda conforme o modo ───────────────────────────────────────────
+    const pdfTitle = t(summarized ? 'pdf.cronogramaResumido' : 'pdf.cronograma');
+
+    // ── Page-1 header + meta ─────────────────────────────────────────────────
+    let startY = _pdfHeader(doc, pdfTitle, pageW, ML);
+    startY     = _pdfMeta(doc, startY, ML, pageW);
+
+    // ── Active filter label ───────────────────────────────────────────────────
+    const q = (document.getElementById('arbolSearch')?.value || '').trim();
+    let filterLabel = '';
+    if (q) {
+      filterLabel = `🔍 "${q}"`;
+    } else if (_wbsFilterEdt) {
+      const node = (_consolTree || D.allRecords).find(r => r.edt === _wbsFilterEdt);
+      filterLabel = `📂 ${_wbsFilterEdt}${node ? ' — ' + node.tarea.trim() : ''}`;
+    }
+    if (filterLabel) {
+      doc.setFontSize(8);
+      doc.setTextColor(40, 80, 160);
+      doc.text(filterLabel, ML, startY);
+      startY += 6;
+      doc.setTextColor(0, 0, 0);
+    }
+
+    // ── Collect rows (detalhado = tudo; resumido = só visíveis) ──────────────
+    const rows = summarized ? _getArbolResumidasRows() : _getArbolPdfRows();
+
+    if (!rows.length) {
+      doc.setFontSize(10);
+      doc.setTextColor(120);
+      doc.text('Sem registros para exportar.', ML, startY + 6);
+      doc.save('Cronograma_LaPampina.pdf');
+      showToast(t('pdf.success'));
+      return;
+    }
+
+    // ── Status label helper ───────────────────────────────────────────────────
+    const statusLbl = {
+      completed: t('status.completed'), inProgress: t('status.inProgress'),
+      late: t('status.late'),           notStarted: t('status.notStarted'),
+    };
+
+    // Colour palettes (RGB arrays for autoTable)
+    const STATUS_CLR = {
+      completed:  [22, 130, 60],
+      inProgress: [25, 100, 200],
+      late:       [200, 40,  40],
+      notStarted: [110, 110, 110],
+    };
+
+    // Cores para linhas pai (resumen/isVirtual) — escala de cinza por nível.
+    //   nivel 1 → cinza escuro  [80,80,80]    texto branco
+    //   nivel 2 → cinza médio   [120,120,120] texto branco
+    //   nivel 3 → cinza         [160,160,160] texto branco
+    //   nivel 4 → cinza médio   [200,200,200] texto escuro
+    //   nivel 5+→ cinza claro   [220,220,220] texto escuro
+    //   folhas  → branco
+    const PAI_BG  = [
+      null,              // nivel 0 (unused)
+      [80,  80,  80 ],   // nivel 1 — cinza escuro
+      [120, 120, 120],   // nivel 2 — cinza médio-escuro
+      [160, 160, 160],   // nivel 3 — cinza
+      [200, 200, 200],   // nivel 4 — cinza médio
+      [220, 220, 220],   // nivel 5 — cinza claro
+      [220, 220, 220],   // nivel 6+
+    ];
+    const PAI_TXT = [
+      null,
+      [255, 255, 255],   // nivel 1: branco (navy escuro)
+      [40,  40,  40 ],   // nivel 2: escuro (cinza médio-escuro)
+      [40,  40,  40 ],   // nivel 3: escuro (cinza médio)
+      [40,  40,  40 ],   // nivel 4: escuro
+      [40,  40,  40 ],   // nivel 5
+      [40,  40,  40 ],   // nivel 6+
+    ];
+
+    // ── Build table body ──────────────────────────────────────────────────────
+    const head = [[
+      t('th.edt'), t('th.activity'),
+      t('th.hh'), t('th.incidence'),
+      'PBs', 'PB Plan', 'PB Av.', 'PB Dev.',
+      t('th.pctPlan'), t('th.pctActual'), t('th.deviation'), t('th.status'),
+    ]];
+
+    const body = rows.map(r => {
+      const hh    = r.hh > 0       ? Math.round(r.hh).toLocaleString('es-CL') : '—';
+      const incid = r.incidencia > 0 ? (r.incidencia * 100).toFixed(3) + '%'   : '—';
+      const pPlan = r.pctCompPlan != null ? (r.pctCompPlan * 100).toFixed(2) + '%' : '—';
+      const pReal = r.pctCompReal != null ? (r.pctCompReal * 100).toFixed(2) + '%' : '—';
+      const dev   = r.incidencia > 0.0001
+        ? ((r.desviacion || 0) >= 0 ? '+' : '') + ((r.desviacion || 0) * 100).toFixed(2) + '%'
+        : '—';
+      const hasPB = r.pbTotal != null;
+      // Indent activity name by level to show hierarchy
+      const indent  = r.nivel > 1 ? '  '.repeat(r.nivel - 1) : '';
+      const actName = indent + (r.tarea || '').trim();
+
+      return [
+        r.edt || '',
+        actName,
+        hh,
+        incid,
+        hasPB ? String(r.pbTotal)  : '—',
+        hasPB ? String(r.pbPlan)   : '—',
+        hasPB ? String(r.pbAv)     : '—',
+        hasPB && r.pbDev != null ? String(r.pbDev) : '—',
+        pPlan,
+        pReal,
+        dev,
+        statusLbl[r.status] || '—',
+      ];
+    });
+
+    // ── Draw autoTable ────────────────────────────────────────────────────────
+    doc.autoTable({
+      head,
+      body,
+      startY,
+      margin: { top: 23, left: ML, right: ML, bottom: 14 },
+
+      styles: {
+        fontSize: 6.2,
+        cellPadding: { top: 1.4, right: 2, bottom: 1.4, left: 2 },
+        overflow: 'linebreak',
+        valign: 'middle',
+        lineColor: [210, 218, 230],
+        lineWidth: 0.2,
+      },
+      headStyles: {
+        fillColor: [0, 57, 115],
+        textColor: 255,
+        fontStyle: 'bold',
+        fontSize: 6.8,
+        halign: 'center',
+      },
+      alternateRowStyles: { fillColor: [250, 252, 255] },
+
+      // Column widths (total ≈ 273 mm for landscape A4 with 10mm margins)
+      columnStyles: {
+        0:  { cellWidth: 26,   fontStyle: 'bold', halign: 'left'   },  // EDT
+        1:  { cellWidth: 82,   halign: 'left'                       },  // Activity
+        2:  { cellWidth: 17,   halign: 'right'                      },  // H-H
+        3:  { cellWidth: 16,   halign: 'right'                      },  // Incid.
+        4:  { cellWidth: 10,   halign: 'center'                     },  // PBs
+        5:  { cellWidth: 13,   halign: 'center'                     },  // PB Plan
+        6:  { cellWidth: 13,   halign: 'center'                     },  // PB Av.
+        7:  { cellWidth: 13,   halign: 'center'                     },  // PB Dev.
+        8:  { cellWidth: 17,   halign: 'right'                      },  // % Plan
+        9:  { cellWidth: 17,   halign: 'right'                      },  // % Real
+        10: { cellWidth: 17,   halign: 'right', fontStyle: 'bold'   },  // Desvío
+        11: { cellWidth: 22,   halign: 'center', fontStyle: 'bold'  },  // Status
+      },
+
+      // didParseCell: hook correto para modificar estilos de célula no autoTable.
+      // (willDrawCell é para desenho nativo jsPDF — não altera o estilo da tabela)
+      didParseCell(data) {
+        if (data.section !== 'body') return;
+        const r = rows[data.row.index];
+        if (!r) return;
+
+        // ── Linhas pai (resumen / virtual): fundo cinza por nível ────────────
+        if (r.resumen || r.isVirtual) {
+          const lvl = Math.min(r.nivel || 1, PAI_BG.length - 1);
+          data.cell.styles.fillColor = PAI_BG[lvl];
+          data.cell.styles.textColor = PAI_TXT[lvl] || [0, 0, 0];
+          data.cell.styles.fontStyle = 'bold';
+        }
+
+        // ── Desvio: vermelho / verde ─────────────────────────────────────────
+        if (data.column.index === 10) {
+          const dev = r.desviacion || 0;
+          if      (dev < -0.001) data.cell.styles.textColor = [200, 30, 30];
+          else if (dev >  0.001) data.cell.styles.textColor = [22, 130, 60];
+        }
+
+        // ── Status: cor por estado ───────────────────────────────────────────
+        if (data.column.index === 11) {
+          const c = STATUS_CLR[r.status];
+          if (c) data.cell.styles.textColor = c;
+        }
+      },
+
+      // Header bar repeated on every continuation page
+      didDrawPage(data) {
+        _pdfHeader(doc, pdfTitle, pageW, ML);
+        // Footer (page number without total — updated below)
+        const pg = doc.internal.getCurrentPageInfo().pageNumber;
+        doc.setFontSize(7);
+        doc.setTextColor(160, 160, 160);
+        doc.text('PowerChina · La Pampina', ML, pageH - 4);
+        doc.text(`${t('pdf.page')} ${pg}`, pageW - ML, pageH - 4, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+      },
+    });
+
+    // Overwrite page numbers with correct X / N total
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFillColor(255, 255, 255);
+      doc.rect(pageW - ML - 32, pageH - 7, 34, 6, 'F');
+      doc.setFontSize(7);
+      doc.setTextColor(160, 160, 160);
+      doc.text(`${t('pdf.page')} ${i} / ${totalPages}`, pageW - ML, pageH - 4, { align: 'right' });
+      doc.setTextColor(0, 0, 0);
+    }
+
+    const fileName = summarized
+      ? 'Cronograma_Resumido_LaPampina.pdf'
+      : 'Cronograma_LaPampina.pdf';
+    doc.save(fileName);
+    showToast(t('pdf.success'));
+
+  } catch (err) {
+    console.error('[_exportCronogramaPDFBase]', err);
+    showToast(t('toast.error') + err.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
