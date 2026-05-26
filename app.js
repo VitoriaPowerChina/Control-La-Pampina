@@ -12,7 +12,10 @@ let _consolTree = null;
 let _simRows    = new Map(); // edt → delta (number: PBs or percentage points)  — Escenarios tab
 let _simTabRows = [];        // { edt, delta, mode:'pb'|'pct' }                   — Simulador tab
 let _simTabMode = 'pb';      // current add-form mode in Simulador tab
-let _recTargetWeeks = 7;     // Recovery analysis — target weeks for the analysis
+let _recTargetWeeks    = 7;     // Recovery analysis — target weeks for the analysis
+let _recRateWeeks      = 3;     // Recovery analysis — weeks to average for recent rate
+let _recCalloutVisible = false; // Recovery S-curve: show endpoint callout on hover only
+let _top5SortAsc = true;        // Resumen top5: true = ascending deviation (most negative first)
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -215,12 +218,78 @@ function calcStatus(r) {
 // ── Recovery Analysis ─────────────────────────────────────────────────────────
 
 /** Setup the target-weeks dropdown */
+/** Toggle sort direction of the Resumen Top-5 panel */
+function toggleTop5Sort() {
+  _top5SortAsc = !_top5SortAsc;
+  const btn = document.getElementById('rsTop5SortBtn');
+  if (btn) btn.textContent = _top5SortAsc ? '↑ Mayor primero' : '↓ Menor primero';
+  if (D) _tryRender(renderResumen);
+}
+
+async function exportResumenPDF() {
+  const el  = document.getElementById('resumenContent');
+  const btn = document.getElementById('rsExportBtn');
+  if (!el) return;
+
+  const origTxt = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando...'; }
+
+  try {
+    // Capture only the dashboard content (no sidebar)
+    const canvas = await html2canvas(el, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: getComputedStyle(document.documentElement)
+                         .getPropertyValue('--bg').trim() || '#f8fafc',
+      logging: false,
+      windowWidth: el.scrollWidth,
+      scrollX: 0, scrollY: 0
+    });
+
+    const { jsPDF } = window.jspdf;
+    // A4 landscape: 297 × 210 mm
+    const PDF_W = 297, PDF_H = 210;
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+    const imgW  = PDF_W;
+    const imgH  = (canvas.height / canvas.width) * imgW;
+    const pages = Math.ceil(imgH / PDF_H);
+
+    const imgData = canvas.toDataURL('image/jpeg', 0.93);
+    for (let p = 0; p < pages; p++) {
+      if (p > 0) pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', 0, -p * PDF_H, imgW, imgH);
+    }
+
+    const sem   = document.getElementById('rsMetaSemana')?.textContent?.trim() || '';
+    const fecha = document.getElementById('rsMetaFecha')?.textContent?.trim()?.replace(/\//g,'-') || '';
+    pdf.save(`Resumen_LaPampina_${sem || fecha || 'export'}.pdf`);
+
+  } catch(e) {
+    alert('Error al exportar PDF: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = origTxt; }
+  }
+}
+
 function setupRecovery() {
   const sel = document.getElementById('recTargetWeeks');
   if (sel) {
     sel.addEventListener('change', () => {
       _recTargetWeeks = parseInt(sel.value, 10) || 7;
       if (D) _tryRender(renderRecovery);
+    });
+  }
+  const selR = document.getElementById('recRateWeeks');
+  if (selR) {
+    selR.addEventListener('change', () => {
+      _recRateWeeks = parseInt(selR.value, 10) || 3;
+      if (D) {
+        _tryRender(renderRecovery);
+        _tryRender(renderResumen);       // Resumen KPIs and analysis panel also use _recRateWeeks
+        _tryRender(renderResMiniScurve); // Resumen S-curve recovery line uses the same rate
+      }
     });
   }
 }
@@ -279,7 +348,7 @@ function renderRecovery() {
     : '—';
 
   // Recent rate: last 3 weeks
-  const recentRate     = _recRecentRate(sc, currIdx, 3);
+  const recentRate     = _recRecentRate(sc, currIdx, _recRateWeeks);
   const accelAdd       = reqRate - recentRate;
   const accelFactor    = recentRate > 0 ? reqRate / recentRate : null;
 
@@ -294,6 +363,54 @@ function renderRecovery() {
 
   // ── Target date label ────────────────────────────────────────────────────
   set('recTargetDate', targetDateLbl);
+
+  // ── Executive header ─────────────────────────────────────────────────────
+  set('recExecFecha',  fmtDate(D.meta.dataDate) || '—');
+  set('recExecSemana', D.meta.dataWeek || '—');
+
+  // ── KPI cards ────────────────────────────────────────────────────────────
+  const devPP    = (pctReal - pctPlan) * 100;
+  const optimRate  = reqRate * 1.2;
+  const optimWeeks = optimRate > 0 ? Math.ceil(recNeeded / optimRate) : null;
+
+  set('recKpiPlan',    (pctPlan * 100).toFixed(2) + '%');
+  set('recKpiReal',    (pctReal * 100).toFixed(2) + '%');
+  set('recKpiDesv',    (devPP >= 0 ? '+' : '') + devPP.toFixed(2) + ' p.p.');
+  set('recKpiReq',     (reqRate * 100).toFixed(2) + ' p.p./sem');
+  set('recKpiReqSem',  _recTargetWeeks);
+  set('recKpiAccel',   accelFactor != null ? accelFactor.toFixed(2) + 'x' : '—');
+  set('recKpiOptRate',  (optimRate * 100).toFixed(2) + ' p.p./sem');
+  set('recKpiOptWeeks', optimWeeks != null ? optimWeeks + ' sem' : '—');
+
+  // Color the accel KPI based on severity
+  const accelCard = document.querySelector('.rec-exec-kpi-card:nth-child(5)');
+  if (accelCard && accelFactor != null) {
+    accelCard.style.borderLeft = accelFactor > 1.5 ? '3px solid var(--danger)'
+      : accelFactor > 1.1 ? '3px solid var(--warning)' : '3px solid var(--success)';
+    const valEl = document.getElementById('recKpiAccel');
+    if (valEl) valEl.style.color = accelFactor > 1.5 ? 'var(--danger)'
+      : accelFactor > 1.1 ? 'var(--warning)' : 'var(--success)';
+  }
+
+  // ── Projection table title ────────────────────────────────────────────────
+  const projTitleEl = document.getElementById('recProjTitleEl');
+  if (projTitleEl) projTitleEl.textContent = t('rec.projTitle').replace('{n}', _recTargetWeeks);
+
+  // ── Footer legend ─────────────────────────────────────────────────────────
+  const targetWkLbl = sc[targetIdx]?.week || '';
+  set('recFooterLegend', `${targetWkLbl}: semana objetivo del proyecto`);
+
+  // ── Donut + area table ───────────────────────────────────────────────────
+  _renderRecDesvDonut();
+
+  // ── Top activities ───────────────────────────────────────────────────────
+  _renderRecTopActivities(devPP);
+
+  // ── Levers ───────────────────────────────────────────────────────────────
+  _renderRecLevers(reqRate, recNeeded);
+
+  // ── Executive message ────────────────────────────────────────────────────
+  _renderRecMessage(pctReal - pctPlan, pctReal, recNeeded, reqRate, accelFactor);
 
   // ── Analysis rows panel ──────────────────────────────────────────────────
   const rowsEl = document.getElementById('recAnalysisRows');
@@ -317,7 +434,7 @@ function renderRecovery() {
       mkRow(t('rec.row.realNow'),      (pctReal * 100).toFixed(2) + '%') +
       mkRow(t('rec.row.recNeeded'),    ppV(recNeeded)) +
       reqRateHtml +
-      mkRow(t('rec.row.realRate'),     ppR(recentRate), 'rec-val-warn') +
+      mkRow(t('rec.row.realRate').replace('{n}', _recRateWeeks), ppR(recentRate), 'rec-val-warn') +
       mkRow(t('rec.row.accelAdd'),     ppR(accelAdd),   accelCls) +
       mkRow(t('rec.row.accelFactor'),  accelFactor != null ? accelFactor.toFixed(2) + '×' : '—', factorCls);
   }
@@ -381,10 +498,13 @@ function renderRecovery() {
   }
 
   // ── Projection table ─────────────────────────────────────────────────────
+  const projTitle = document.getElementById('recProjTitleEl');
+  if (projTitle) projTitle.textContent = t('rec.projTitle').replace('{n}', _recTargetWeeks);
+
   const projBody = document.getElementById('recProjBody');
   if (projBody) {
     let projReal = pctReal, projReq = pctReal, rows = '';
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= _recTargetWeeks; i++) {
       const scIdx   = currIdx + i;
       projReal     += recentRate;
       projReq      += reqRate;
@@ -414,60 +534,366 @@ function renderRecovery() {
   _tryRender(renderRecWeekly);
 }
 
-/** S-curve: plan / real / trend (sim.) / required (sim.) + fill between + cutoff line */
+function _renderRecDesvDonut() {
+  const canvas = document.getElementById('recDesvAreaDonut');
+  const tableEl = document.getElementById('recDesvAreaTable');
+  if (!canvas || !D) return;
+
+  const areas = (D.areas || []).filter(a => a.nivel === 3 && a.desvPond < 0);
+  if (!areas.length) return;
+
+  const totalDesvPond = areas.reduce((s, a) => s + Math.abs(a.desvPond), 0);
+  const COLORS = ['#c00000','#e68a00','#2563eb','#7c3aed','#059669','#0891b2','#64748b'];
+
+  const labels = areas.map(a => a.tarea.trim().slice(0, 22));
+  const vals   = areas.map(a => +(Math.abs(a.desvPond) * 100).toFixed(3));
+
+  destroyChart('recDesvAreaDonut');
+  charts['recDesvAreaDonut'] = new Chart(canvas, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data: vals, backgroundColor: COLORS, borderWidth: 1 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `${ctx.label}: ${ctx.parsed.toFixed(3)} p.p.` } }
+      },
+      cutout: '62%'
+    }
+  });
+
+  // Table
+  if (tableEl) {
+    const rows = areas.map((a, i) => {
+      const pct = totalDesvPond > 0 ? (Math.abs(a.desvPond) / totalDesvPond * 100).toFixed(1) : '—';
+      return `<tr>
+        <td><span style="display:inline-block;width:10px;height:10px;border-radius:2px;
+          background:${COLORS[i % COLORS.length]};margin-right:5px;vertical-align:middle"></span>
+          ${a.tarea.trim().slice(0,24)}</td>
+        <td style="text-align:right;color:var(--danger);font-weight:600">${(a.desvPond * 100).toFixed(2)}</td>
+        <td style="text-align:right;color:var(--text-muted)">${pct}%</td>
+      </tr>`;
+    }).join('');
+    tableEl.innerHTML = `<table class="rec-desv-area-tbl">
+      <thead><tr><th>Área</th><th style="text-align:right">Desvío (p.p.)</th><th style="text-align:right">% del desvío</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  const totalEl = document.getElementById('recDesvTotalRow');
+  if (totalEl) {
+    const tot = areas.reduce((s, a) => s + a.desvPond * 100, 0);
+    totalEl.innerHTML = `<span>DESVÍO TOTAL DEL PROYECTO</span><span style="color:var(--danger);font-weight:800">${tot.toFixed(2)} p.p.</span>`;
+  }
+}
+
+function _renderRecTopActivities(devTotalPP) {
+  const el = document.getElementById('recTopActivities');
+  if (!el || !D) return;
+
+  const top5 = D.ranking.filter(r => r.desvPond < 0)
+    .sort((a, b) => a.desvPond - b.desvPond)
+    .slice(0, 5);
+
+  const areaMap = _buildAreaMap();
+  const totalNeg = top5.reduce((s, r) => s + Math.abs(r.desvPond), 0);
+  const maxAbs   = top5.length ? Math.abs(top5[0].desvPond) : 1;
+
+  const rows = top5.map((r, i) => {
+    const area    = _areaOfEdt(r.edt, areaMap);
+    const desvPP  = (r.desviacion * 100).toFixed(2);
+    const pctDev  = devTotalPP !== 0 ? Math.abs(r.desvPond * 100 / (devTotalPP / 100)).toFixed(1) : '—';
+    const barW    = Math.round(Math.abs(r.desvPond) / maxAbs * 100);
+    const imp     = Math.abs(r.desvPond) * 100;
+    const badge   = imp > 0.005 ? 'badge badge-crit' : imp > 0.002 ? 'badge badge-late' : 'badge badge-warn';
+    const lbl     = imp > 0.005 ? 'Crítico' : imp > 0.002 ? 'Alto' : 'Medio';
+    return `<tr>
+      <td style="font-weight:700;color:var(--text-muted)">${i+1}</td>
+      <td style="font-weight:600">${r.tarea.trim()}</td>
+      <td style="font-size:10px;color:var(--primary)">${area}</td>
+      <td style="color:var(--danger);font-weight:700;text-align:right">${desvPP}</td>
+      <td style="text-align:right">${pctDev}%</td>
+      <td><div class="rec-act-bar-wrap"><div class="rec-act-bar" style="width:${barW}%"></div></div></td>
+      <td><span class="${badge}">${lbl}</span></td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `<table class="rec-act-table">
+    <thead><tr>
+      <th>#</th><th>Actividad</th><th>Área</th>
+      <th style="text-align:right">Desvío (p.p.)</th>
+      <th style="text-align:right">% del desvío</th>
+      <th>Impacto</th><th>Estado</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+
+  // subtotal note
+  const noteEl = document.getElementById('recActivitiesNote');
+  if (noteEl) {
+    const subtotal = top5.reduce((s, r) => s + r.desvPond * 100, 0);
+    const pctTot   = devTotalPP !== 0 ? Math.abs(subtotal / devTotalPP * 100).toFixed(1) : '—';
+    noteEl.innerHTML = `<i class="bi bi-info-circle"></i> Estas 5 actividades representan el <b>${pctTot}%</b> del desvío total del proyecto (${devTotalPP.toFixed(2)} p.p.)`;
+  }
+}
+
+function _renderRecLevers(reqRate, recNeeded) {
+  const el = document.getElementById('recLeversTable');
+  if (!el || !D) return;
+
+  const levers = D.ranking.filter(r => r.desvPond < 0)
+    .sort((a, b) => a.desvPond - b.desvPond)
+    .slice(0, 5);
+
+  const areaMap  = _buildAreaMap();
+  const totalNeg = levers.reduce((s, r) => s + Math.abs(r.desvPond), 0) || 1;
+
+  const rows = levers.map((r, i) => {
+    const area   = _areaOfEdt(r.edt, areaMap);
+    const pctImp = (Math.abs(r.desvPond) / totalNeg * 100).toFixed(0);
+    const recPot = totalNeg > 0
+      ? (Math.abs(r.desvPond) / totalNeg * reqRate * 100).toFixed(2)
+      : '—';
+    // Facilidad de ejecución: 1-5 based on desviacion severity and whether started
+    const absDev = Math.abs(r.desviacion);
+    let ease = r.pctCompReal > 0 ? 3 : 2;
+    if (absDev < 0.15) ease += 1;
+    else if (absDev > 0.6) ease -= 1;
+    ease = Math.max(1, Math.min(5, ease));
+    const dotsHtml = '●'.repeat(ease) + '<span style="opacity:.25">' + '●'.repeat(5 - ease) + '</span>';
+    return `<tr>
+      <td style="font-weight:700;color:var(--text-muted)">${i+1}</td>
+      <td style="font-weight:600">${r.tarea.trim()}</td>
+      <td style="font-size:10px;color:var(--primary)">${area}</td>
+      <td style="text-align:right;color:var(--success);font-weight:700">+${recPot}</td>
+      <td style="text-align:right">${pctImp}%</td>
+      <td class="rec-lev-dots">${dotsHtml}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `<table class="rec-lev-table">
+    <thead><tr>
+      <th>#</th><th>Actividad</th><th>Área</th>
+      <th style="text-align:right">Recup. potencial<br><small>(p.p./sem)</small></th>
+      <th style="text-align:right">% Impacto</th>
+      <th>Facilidad</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+
+  const noteEl = document.getElementById('recLeversNote');
+  if (noteEl) {
+    const totalRecovPot = levers.reduce((s, r) => s + Math.abs(r.desvPond) / totalNeg * reqRate * 100, 0);
+    const pctCovered = recNeeded > 0 ? (totalRecovPot / (reqRate * 100) * 100).toFixed(0) : '—';
+    noteEl.innerHTML = `<i class="bi bi-lightning-charge"></i> Con enfoque en estas actividades se puede recuperar hasta <b>+${totalRecovPot.toFixed(2)} p.p./sem</b> (${pctCovered}% de la meta).`;
+  }
+}
+
+function _renderRecMessage(dev, pctReal, recNeeded, reqRate, accelFactor) {
+  const el = document.getElementById('recMessagePanel');
+  if (!el) return;
+
+  const isCrit = accelFactor != null && accelFactor > 1.5;
+  const isWarn = accelFactor != null && accelFactor > 1.1;
+  const topActs = D.ranking.filter(r => r.desvPond < 0).slice(0, 3).map(r => r.tarea.trim());
+
+  const bullets = [];
+
+  // Bullet 1: deviation
+  const devPP = Math.abs(dev * 100).toFixed(2);
+  bullets.push({ cls: isCrit ? 'danger' : isWarn ? 'warn' : 'ok',
+    text: `El desvío actual de <b>-${devPP} p.p.</b> requiere atención ${isCrit ? 'inmediata' : isWarn ? 'sostenida' : 'de seguimiento'}.` });
+
+  // Bullet 2: main activities
+  if (topActs.length) {
+    bullets.push({ cls: 'warn',
+      text: `Las actividades que más impactan el atraso son: <b>${topActs.join(', ')}</b>.` });
+  }
+
+  // Bullet 3: current rate
+  const sc = D.scurve;
+  const currIdx = sc.findIndex(s => s.isCurrent);
+  const rateRecent = _recRecentRate(sc, currIdx, _recRateWeeks);
+  bullets.push({ cls: 'neutral',
+    text: `Manteniendo el ritmo actual (<b>${(rateRecent * 100).toFixed(2)} p.p./sem</b>), el desvío aumentará.` });
+
+  // Bullet 4: required rate
+  bullets.push({ cls: isCrit ? 'danger' : 'warn',
+    text: `Para recuperar en <b>${_recTargetWeeks} semanas</b>, se requiere avanzar <b>${(reqRate * 100).toFixed(2)} p.p./sem</b> (${accelFactor != null ? accelFactor.toFixed(2) + 'x' : '—'} el rendimiento actual).` });
+
+  const colorMap = { danger: 'var(--danger)', warn: 'var(--warning)', ok: 'var(--success)', neutral: 'var(--text-muted)' };
+  el.innerHTML = '<ul>' + bullets.map(b =>
+    `<li style="color:${colorMap[b.cls]}">${b.text}</li>`
+  ).join('') + '</ul>';
+}
+
+/** S-curve: reference design — plan / real / deviation fill / recovery line + annotations */
 function renderRecScurve() {
   const canvas = document.getElementById('recScurveChart');
   if (!canvas || !D) return;
 
-  const sc         = D.scurve;
-  const currIdx    = sc.findIndex(s => s.isCurrent);
+  const sc = D.scurve;
+  const currIdx = sc.findIndex(s => s.isCurrent);
   if (currIdx < 0) return;
 
-  const pctReal    = sc[currIdx].real || 0;
-  const recentRate = _recRecentRate(sc, currIdx, 3);
+  const pctReal    = sc[currIdx].real  || 0;
+  const planAtCurr = sc[currIdx].plan  || 0;
+  const deviation  = pctReal - planAtCurr;           // negative = behind plan
+
   const targetIdx  = Math.min(sc.length - 1, currIdx + _recTargetWeeks);
   const planAtTgt  = sc[targetIdx]?.plan || 0;
   const recNeeded  = Math.max(0, planAtTgt - pctReal);
   const reqRate    = _recTargetWeeks > 0 ? recNeeded / _recTargetWeeks : 0;
+  const targetWeekLabel = sc[targetIdx]?.week || '';
 
-  const labels   = sc.map(s => s.week);
-  const planData = sc.map(s => +(s.plan * 100).toFixed(2));
-  const realData = sc.map(s => s.real != null ? +(s.real * 100).toFixed(2) : null);
+  // Data arrays
+  const weekLabels = sc.map(s => s.week);
+  const planData   = sc.map(s => +(s.plan * 100).toFixed(2));
+  const realData   = sc.map(s => s.real != null ? +(s.real * 100).toFixed(2) : null);
 
-  // Trend from currIdx (at current pace)
-  const trendData = sc.map((_, i) => {
-    if (i < currIdx) return null;
-    return +(Math.min(1, pctReal + recentRate * (i - currIdx)) * 100).toFixed(2);
+  // Recovery line: same curvature as the Plan line in the currIdx→targetIdx segment,
+  // rescaled in Y so it starts at pctReal and ends exactly at planAtTgt.
+  // Mapping: t = (plan[i] - planAtCurr) / (planAtTgt - planAtCurr)  → [0..1] along plan shape
+  //          recov[i] = pctReal + t * (planAtTgt - pctReal)
+  const planRange = planAtTgt - planAtCurr;
+  const recovData = sc.map((s, i) => {
+    if (i < currIdx || i > targetIdx) return null;
+    const t = planRange !== 0 ? (s.plan - planAtCurr) / planRange : (i - currIdx) / _recTargetWeeks;
+    const v = pctReal + t * (planAtTgt - pctReal);
+    return +(Math.min(1, Math.max(0, v)) * 100).toFixed(2);
   });
-  // Required (requerido) from currIdx — fills area against trend
-  const reqData = sc.map((_, i) => {
-    if (i < currIdx) return null;
-    return +(Math.min(1, pctReal + reqRate * (i - currIdx)) * 100).toFixed(2);
+
+  // X-axis: show "ene/25" style labels only at month transitions
+  const MONTHS_ES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const monthTickLabels = sc.map((s, i) => {
+    if (!s.date) return null;
+    const d = new Date(s.date + 'T12:00:00');
+    if (i === 0) return MONTHS_ES[d.getMonth()] + '/' + String(d.getFullYear()).slice(2);
+    const prev = sc[i - 1]?.date ? new Date(sc[i - 1].date + 'T12:00:00') : null;
+    if (!prev || d.getMonth() !== prev.getMonth())
+      return MONTHS_ES[d.getMonth()] + '/' + String(d.getFullYear()).slice(2);
+    return null;
   });
 
-  // Inline plugin: vertical "Fecha de corte" line at currIdx
-  const cutoffPlugin = {
-    id: 'recCutoff',
+  // Update chart card title dynamically
+  const titleEl = document.querySelector('.rec-curve-title');
+  if (titleEl) titleEl.textContent = `CURVA S - PROYECTO  (Meta de recuperación: ${_recTargetWeeks} semanas)`;
+
+  // ── Annotation plugin ────────────────────────────────────────────────────────
+  const annotPlugin = {
+    id: 'recAnnotations',
     afterDraw(chart) {
-      const meta = chart.getDatasetMeta(0);
-      const pt   = meta?.data?.[currIdx];
-      if (!pt) return;
-      const { ctx, chartArea, scales } = chart;
-      const x = pt.x;
+      const { ctx, scales: { x, y }, chartArea } = chart;
+      const currX    = x.getPixelForValue(currIdx);
+      const tgtX     = x.getPixelForValue(targetIdx);
+      const currRealY = y.getPixelForValue(pctReal * 100);
+      const currPlanY = y.getPixelForValue(planAtCurr * 100);
+      const tgtY     = y.getPixelForValue(planAtTgt * 100);
+
       ctx.save();
-      ctx.setLineDash([4, 3]);
-      ctx.strokeStyle = 'rgba(100,116,139,.6)';
-      ctx.lineWidth   = 1.5;
+
+      // 1. Vertical cutoff line (dark, dashed)
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = 'rgba(30,41,59,.65)';
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(x, chartArea.top);
-      ctx.lineTo(x, chartArea.bottom);
+      ctx.moveTo(currX, chartArea.top);
+      ctx.lineTo(currX, chartArea.bottom);
       ctx.stroke();
       ctx.setLineDash([]);
-      // Label
-      ctx.fillStyle  = 'rgba(100,116,139,.9)';
-      ctx.font       = 'bold 9px sans-serif';
-      ctx.textAlign  = 'center';
-      ctx.fillText(t('rec.cutoffLbl'), x, chartArea.top - 2);
+
+      // 2. "Fecha de corte" dark pill at bottom of cutoff line
+      const fcText = t('rec.cutoffLbl');
+      ctx.font = 'bold 10px sans-serif';
+      const fcW = ctx.measureText(fcText).width + 18;
+      const fcH = 22;
+      const fcX = currX - fcW / 2;
+      const fcY = chartArea.bottom + 6;
+      ctx.fillStyle = '#1e293b';
+      _rrect(ctx, fcX, fcY, fcW, fcH, 5);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.fillText(fcText, currX, fcY + 14);
+
+      // 3. Deviation annotation at cutoff: red bidirectional arrow + label
+      if (deviation < 0 && currPlanY < currRealY - 6) {
+        const midY = (currRealY + currPlanY) / 2;
+        const arrX = currX + 10;
+
+        // Arrow shaft
+        ctx.strokeStyle = '#dc2626';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(arrX, currPlanY + 5);
+        ctx.lineTo(arrX, currRealY - 5);
+        ctx.stroke();
+        // Arrowhead up (toward plan)
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.moveTo(arrX, currPlanY + 2);
+        ctx.lineTo(arrX - 4, currPlanY + 10);
+        ctx.lineTo(arrX + 4, currPlanY + 10);
+        ctx.closePath(); ctx.fill();
+        // Arrowhead down (toward real)
+        ctx.beginPath();
+        ctx.moveTo(arrX, currRealY - 2);
+        ctx.lineTo(arrX - 4, currRealY - 10);
+        ctx.lineTo(arrX + 4, currRealY - 10);
+        ctx.closePath(); ctx.fill();
+
+        // Label
+        const devTxt = (deviation * 100).toFixed(2).replace('.', ',') + ' p.p.';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillStyle = '#dc2626';
+        ctx.textAlign = 'left';
+        ctx.fillText(devTxt, arrX + 8, midY + 4);
+      }
+
+      // 4. Dashed vertical drop from endpoint to x-axis
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = 'rgba(37,99,235,.45)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(tgtX, tgtY);
+      ctx.lineTo(tgtX, chartArea.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 5. Callout box at endpoint — only when hovering near the target dot
+      if (_recCalloutVisible) {
+        const boxLines = [
+          'Recuperación estimada',
+          `en ${_recTargetWeeks} semanas`,
+          `(semana objetivo: ${targetWeekLabel})`,
+        ];
+        ctx.font = 'bold 11px sans-serif';
+        const maxW = Math.max(...boxLines.map(l => ctx.measureText(l).width));
+        const bW = maxW + 24;
+        const bH = 56;
+        const bPad = 12;
+        // Position box to the left of the dot; flip right if no room
+        let bX = tgtX - bW - bPad;
+        if (bX < chartArea.left + 4) bX = tgtX + bPad;
+        const bY = Math.max(chartArea.top + 4, tgtY - bH / 2);
+
+        ctx.fillStyle = 'rgba(239,246,255,.95)';
+        ctx.strokeStyle = '#2563eb';
+        ctx.lineWidth = 1.5;
+        _rrect(ctx, bX, bY, bW, bH, 7);
+        ctx.fill(); ctx.stroke();
+
+        ctx.fillStyle = '#1e40af';
+        ctx.textAlign = 'center';
+        const cx = bX + bW / 2;
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText(boxLines[0], cx, bY + 17);
+        ctx.fillText(boxLines[1], cx, bY + 31);
+        ctx.font = '10px sans-serif';
+        ctx.fillStyle = '#3b82f6';
+        ctx.fillText(boxLines[2], cx, bY + 46);
+      }
+
       ctx.restore();
     }
   };
@@ -475,62 +901,138 @@ function renderRecScurve() {
   destroyChart('recScurveChart');
   charts['recScurveChart'] = new Chart(canvas, {
     type: 'line',
-    plugins: [cutoffPlugin],
+    plugins: [annotPlugin],
     data: {
-      labels,
+      labels: weekLabels,
       datasets: [
+        // 0 — Plan
         { label: t('rec.lbl.plan'),
-          data: planData, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,.07)',
+          data: planData, borderColor: '#2563eb',
           borderWidth: 2, pointRadius: 0, fill: false, tension: 0.3, order: 4 },
+        // 1 — Real
         { label: t('rec.lbl.real'),
-          data: realData, borderColor: '#16a34a', backgroundColor: 'transparent',
+          data: realData, borderColor: '#166534',
           borderWidth: 2.5, pointRadius: 0, fill: false, tension: 0.3, spanGaps: false, order: 3 },
-        // dataset index 2 — trend (lower simulation)
-        { label: t('rec.lbl.trend'),
-          data: trendData, borderColor: '#f59e0b', backgroundColor: 'transparent',
-          borderWidth: 1.5, borderDash: [5, 3], pointRadius: 0, fill: false, tension: 0.2, order: 2 },
-        // dataset index 3 — required (upper simulation) — fills DOWN to dataset 2 (trend)
-        { label: t('rec.lbl.required'),
-          data: reqData, borderColor: '#e11d48', backgroundColor: 'rgba(148,163,184,.18)',
-          borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0,
-          fill: { target: 2, above: 'rgba(148,163,184,.15)', below: 'transparent' },
-          tension: 0.2, order: 1 },
+        // 2 — Recovery line (orange dashed, stops at targetIdx)
+        { label: `${t('rec.lbl.recovery')} (meta ${_recTargetWeeks} sem)`,
+          data: recovData, borderColor: '#f97316',
+          borderWidth: 2, borderDash: [8, 5], pointRadius: 0,
+          fill: false, tension: 0.3, spanGaps: false, order: 2 },
+        // 3 — Deviation fill: fills between real (index 1) and plan (index 0) → pink area
+        { label: t('rec.lbl.desvFill'),
+          data: realData, borderColor: 'transparent', borderWidth: 0,
+          backgroundColor: 'rgba(220,38,38,.12)',
+          pointRadius: 0, tension: 0.3, spanGaps: false,
+          fill: { target: 0, above: 'transparent', below: 'rgba(220,38,38,.13)' },
+          order: 5 },
+        // 4 — Endpoint marker (blue dot exactly where recovery meets plan)
+        { label: null,
+          data: sc.map((_, i) => i === targetIdx ? +(planAtTgt * 100).toFixed(2) : null),
+          borderColor: '#2563eb', backgroundColor: '#2563eb',
+          pointRadius: sc.map((_, i) => i === targetIdx ? 6 : 0),
+          pointHoverRadius: 8, borderWidth: 0, fill: false, tension: 0,
+          showLine: false, spanGaps: false, order: 0 },
       ],
     },
     options: {
       responsive: true,
-      maintainAspectRatio: false,   // container .rec-curve-wrap provides fixed height
-      layout: { padding: { top: 14 } },
+      maintainAspectRatio: false,
+      layout: { padding: { top: 6, bottom: 30 } },  // bottom padding for "Fecha de corte" pill
       plugins: {
-        legend: { display: true, position: 'top',
-          labels: { boxWidth: 14, font: { size: 11 }, padding: 14 } },
+        legend: {
+          display: true, position: 'top',
+          labels: {
+            boxWidth: 28, boxHeight: 3, font: { size: 11 }, padding: 16,
+            filter: item => item.text != null,
+            generateLabels(chart) {
+              const ds = chart.data.datasets;
+              return [
+                { text: ds[0].label, strokeStyle: ds[0].borderColor, lineWidth: 2,
+                  fillStyle: 'transparent', hidden: false, datasetIndex: 0 },
+                { text: ds[1].label, strokeStyle: ds[1].borderColor, lineWidth: 2.5,
+                  fillStyle: 'transparent', hidden: false, datasetIndex: 1 },
+                { text: ds[2].label, strokeStyle: ds[2].borderColor, lineWidth: 2,
+                  lineDash: [8, 5], fillStyle: 'transparent', hidden: false, datasetIndex: 2 },
+                { text: ds[3].label, strokeStyle: 'transparent', lineWidth: 0,
+                  fillStyle: 'rgba(220,38,38,.2)', hidden: false, datasetIndex: 3 },
+              ];
+            }
+          }
+        },
         tooltip: {
           mode: 'index', intersect: false,
           callbacks: {
+            title: items => items[0] ? weekLabels[items[0].dataIndex] : '',
             afterBody(items) {
               const i = items[0]?.dataIndex;
-              if (i == null) return [];
-              const lines = [];
-              if (i === currIdx) {
-                lines.push(`── ${t('rec.cutoffLbl')} ──`);
-                lines.push(`${t('rec.row.planAtTarget')}: ${(planAtTgt * 100).toFixed(2)}%`);
-                lines.push(`${t('rec.row.recNeeded')}: ${(recNeeded * 100).toFixed(2)} p.p.`);
-              }
-              return lines;
+              if (i == null || i !== currIdx) return [];
+              return [
+                `── ${t('rec.cutoffLbl')} ──`,
+                `Plan en sem.+${_recTargetWeeks}: ${(planAtTgt * 100).toFixed(2)}%`,
+                `Desvío actual: ${(deviation * 100).toFixed(2)} p.p.`,
+              ];
             }
           }
         },
       },
       scales: {
-        y: { min: 0, max: 100, ticks: { callback: v => v + '%' } },
-        x: { ticks: { maxTicksLimit: 14, maxRotation: 30, font: { size: 10 } } },
+        y: {
+          min: 0, max: 100,
+          ticks: { callback: v => v + '%', font: { size: 11 } },
+          grid: { color: 'rgba(0,0,0,.06)' }
+        },
+        x: {
+          ticks: {
+            callback: (_, i) => monthTickLabels[i] ?? null,
+            maxRotation: 0, font: { size: 10 },
+            autoSkip: false,
+          },
+          grid: { display: false }
+        },
       },
       interaction: { mode: 'index', intersect: false },
     },
   });
+
+  // Hover listeners: show callout only when mouse is near the endpoint dot
+  const ch = charts['recScurveChart'];
+  if (ch) {
+    // Remove any previous listeners stored on the canvas element
+    if (canvas._recHoverFn)   canvas.removeEventListener('mousemove',  canvas._recHoverFn);
+    if (canvas._recLeaveFn)   canvas.removeEventListener('mouseleave', canvas._recLeaveFn);
+
+    canvas._recHoverFn = (e) => {
+      const rect    = canvas.getBoundingClientRect();
+      const mx      = e.clientX - rect.left;
+      const tgtPx   = ch.scales.x?.getPixelForValue(targetIdx);
+      const was     = _recCalloutVisible;
+      _recCalloutVisible = tgtPx != null && Math.abs(mx - tgtPx) < 40;
+      if (_recCalloutVisible !== was) ch.draw();
+    };
+    canvas._recLeaveFn = () => {
+      if (_recCalloutVisible) { _recCalloutVisible = false; ch.draw(); }
+    };
+    canvas.addEventListener('mousemove',  canvas._recHoverFn);
+    canvas.addEventListener('mouseleave', canvas._recLeaveFn);
+  }
 }
 
-/** Incremental weekly bar chart for Recovery tab */
+/** Draw a rounded rectangle path (helper used by renderRecScurve annotations) */
+function _rrect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+/** Weekly rhythm chart: real increments (history) + required-rate reference line */
 function renderRecWeekly() {
   const canvas = document.getElementById('recWeeklyChart');
   if (!canvas || !D) return;
@@ -539,30 +1041,45 @@ function renderRecWeekly() {
   const currIdx = sc.findIndex(s => s.isCurrent);
   if (currIdx < 0) return;
 
-  const nWeeks     = 10;
-  const sliceStart = Math.max(0, currIdx - nWeeks + 1);
-  const slice      = sc.slice(sliceStart, currIdx + 1);
+  const pctReal    = sc[currIdx].real  || 0;
+  const planAtCurr = sc[currIdx].plan  || 0;
+  const targetIdx  = Math.min(sc.length - 1, currIdx + _recTargetWeeks);
+  const planAtTgt  = sc[targetIdx]?.plan || 0;
+  const recNeeded  = Math.max(0, planAtTgt - pctReal);
+  const reqRate    = _recTargetWeeks > 0 ? (recNeeded / _recTargetWeeks) * 100 : 0;  // % per week
 
-  const labels   = slice.map(s => s.week);
-  const planInc  = slice.map((_, i) => {
-    const gi   = sliceStart + i;
-    const prev = gi > 0 ? (sc[gi - 1].plan || 0) : 0;
-    return +((sc[gi].plan - prev) * 100).toFixed(3);
-  });
-  const realInc  = slice.map((s, i) => {
-    if (s.real == null) return null;
-    const gi   = sliceStart + i;
-    const prev = gi > 0 ? (sc[gi - 1].real || 0) : 0;
-    return +((s.real - prev) * 100).toFixed(3);
-  });
+  // Last _recRateWeeks real weekly increments
+  const nWeeks     = Math.max(_recRateWeeks, 8);
+  const sliceStart = Math.max(1, currIdx - nWeeks + 1);
+  const labels     = [];
+  const realInc    = [];
+  const planInc    = [];
+
+  for (let gi = sliceStart; gi <= currIdx; gi++) {
+    labels.push(sc[gi].week);
+    const rPrev = sc[gi - 1]?.real, rCurr = sc[gi]?.real;
+    realInc.push(rPrev != null && rCurr != null
+      ? +((rCurr - rPrev) * 100).toFixed(3) : null);
+    const pPrev = sc[gi - 1]?.plan ?? 0;
+    planInc.push(+((sc[gi].plan - pPrev) * 100).toFixed(3));
+  }
 
   const validReal = realInc.filter(v => v != null);
-  const avgReal   = validReal.length ? validReal.reduce((a, b) => a + b, 0) / validReal.length : 0;
+  const avgReal   = validReal.length
+    ? validReal.reduce((a, b) => a + b, 0) / validReal.length : 0;
 
-  // Footer text (no annotation plugin)
+  // Required-rate horizontal line (same length as bars)
+  const reqLine = labels.map(() => +reqRate.toFixed(3));
+  // Avg-real horizontal line
+  const avgLine = labels.map(() => +avgReal.toFixed(3));
+
+  // Footer
   const footer = document.getElementById('recWeeklyFooter');
   if (footer) {
-    footer.innerHTML = `${t('rec.lbl.avgRate')}: <b>${avgReal.toFixed(3)}%</b> &nbsp;|&nbsp; ${t('rec.lbl.reqRate')}: <b>${(_recTargetWeeks > 0 ? ((1 - (sc[currIdx].real || 0)) / _recTargetWeeks * 100).toFixed(3) : '—')}%</b> /sem`;
+    footer.innerHTML =
+      `${t('rec.lbl.avgRate')}: <b>${avgReal.toFixed(2)}%</b>/sem` +
+      ` &nbsp;|&nbsp; ` +
+      `${t('rec.lbl.reqRate')}: <b style="color:#f97316">${reqRate.toFixed(2)}%</b>/sem`;
   }
 
   destroyChart('recWeeklyChart');
@@ -571,21 +1088,47 @@ function renderRecWeekly() {
     data: {
       labels,
       datasets: [
-        { label: t('rec.lbl.plan'), data: planInc,
-          backgroundColor: 'rgba(37,99,235,.35)', borderColor: '#2563eb', borderWidth: 1 },
-        { label: t('rec.lbl.real'), data: realInc,
-          backgroundColor: 'rgba(22,163,74,.5)',  borderColor: '#16a34a', borderWidth: 1 },
+        // Plan increment bars (background reference)
+        { type: 'bar', label: t('rec.lbl.plan'), data: planInc,
+          backgroundColor: 'rgba(37,99,235,.25)', borderColor: '#2563eb',
+          borderWidth: 1, order: 3 },
+        // Real increment bars
+        { type: 'bar', label: t('rec.lbl.real'), data: realInc,
+          backgroundColor: 'rgba(22,163,74,.55)', borderColor: '#16a34a',
+          borderWidth: 1, order: 2 },
+        // Required rate — orange horizontal line
+        { type: 'line', label: t('rec.lbl.reqRate'),
+          data: reqLine, borderColor: '#f97316', borderWidth: 2,
+          borderDash: [6, 4], pointRadius: 0, fill: false,
+          tension: 0, order: 0 },
+        // Avg real rate — green dashed line
+        { type: 'line', label: t('rec.lbl.avgRate'),
+          data: avgLine, borderColor: '#16a34a', borderWidth: 1.5,
+          borderDash: [3, 3], pointRadius: 0, fill: false,
+          tension: 0, order: 1 },
       ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: true,
       plugins: {
-        legend: { display: true, position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-        tooltip: { mode: 'index', intersect: false },
+        legend: {
+          display: true, position: 'bottom',
+          labels: { boxWidth: 22, boxHeight: 3, font: { size: 11 }, padding: 12 },
+        },
+        tooltip: {
+          mode: 'index', intersect: false,
+          callbacks: {
+            label: item => `${item.dataset.label}: ${item.parsed.y != null ? item.parsed.y.toFixed(2) + '%' : '—'}`,
+          },
+        },
       },
       scales: {
-        y: { min: 0, ticks: { callback: v => v + '%' } },
+        y: {
+          min: 0,
+          ticks: { callback: v => v.toFixed(2) + '%', font: { size: 10 } },
+          grid: { color: 'rgba(0,0,0,.06)' },
+        },
         x: { ticks: { maxRotation: 30, font: { size: 10 } } },
       },
     },
@@ -606,14 +1149,20 @@ function render() {
   _tryRender(renderScurve);
   _tryRender(renderAreasBar);
   _tryRender(renderAreasTable);
-  _tryRender(renderDesviosBar, D.topDesvios);
-  _tryRender(renderDesviosTable, D.topDesvios);
-  _tryRender(renderCriticasBar, D.critical);
-  _tryRender(renderCriticasTable, D.critical);
+  const _desvNeg = D.ranking.filter(r => r.desvPond < 0);
+  _tryRender(renderDesviosBar, _desvNeg);
+  _tryRender(renderDesviosTable, _desvNeg);
+  const _critSorted = [...D.critical].sort((a, b) => a.desviacion - b.desviacion);
+  _tryRender(renderCriticasBar, _critSorted);
+  _tryRender(renderCriticasTable, _critSorted);
   _tryRender(renderSinAvanceCharts, D.sinAvance);
   _tryRender(renderSinAvanceTable, D.sinAvance);
-  _tryRender(renderRankingBar, D.ranking.slice(0, 20));
-  _tryRender(renderRankingTable, D.ranking);
+  const _rankNeg = D.ranking.filter(r => r.desvPond < 0);
+  const _rankPos = D.ranking.filter(r => r.desvPond > 0).sort((a,b) => b.desvPond - a.desvPond);
+  _tryRender(renderRankingBar,      _rankNeg.slice(0, 20));
+  _tryRender(renderRankingTable,    _rankNeg);
+  _tryRender(renderRankingBarPos,   _rankPos.slice(0, 15));
+  _tryRender(renderRankingTablePos, _rankPos);
   _tryRender(renderConsolidado);
   _tryRender(renderRecovery);
   try { populateAreaDropdowns(); } catch(e) { console.error('[render] populateAreaDropdowns', e); }
@@ -995,7 +1544,7 @@ function renderResumen() {
   const planAtTarget = sc[targetIdx]?.plan || 0;
   const recNeeded = Math.max(0, planAtTarget - pctReal);
   const reqRate   = _recTargetWeeks > 0 ? recNeeded / _recTargetWeeks : 0;
-  const recentRate = _recRecentRate(sc, currIdx, 3);
+  const recentRate = _recRecentRate(sc, currIdx, _recRateWeeks);
   const accelFactor = recentRate > 0 ? reqRate / recentRate : null;
   const optRate  = reqRate * 1.2;
   const optWeeks = optRate > 0 ? Math.ceil(recNeeded / optRate) : null;
@@ -1017,6 +1566,9 @@ function renderResumen() {
 
   // Top 5 desvíos
   _rsRenderTop5();
+
+  // Top 5 por impacto
+  _rsRenderImpact();
 
   // Palancas de recuperación
   _rsRenderLevers();
@@ -1040,7 +1592,7 @@ function _rsRenderAnalysis(pctPlan, pctReal, dev, planAtTarget, recNeeded, reqRa
     { lbl: `Plan en sem. +${_recTargetWeeks}`, val: pct(planAtTarget) },
     { lbl: 'Recuperación necesaria',    val: pct(recNeeded),                     highlight: true },
     { lbl: 'Tasa req. (% / sem)',       val: (reqRate*100).toFixed(3)+'%',       highlight: true },
-    { lbl: 'Tasa reciente (3 sem)',     val: (recentRate*100).toFixed(3)+'%' },
+    { lbl: `Tasa reciente (${_recRateWeeks} sem)`, val: (recentRate*100).toFixed(3)+'%' },
     { lbl: 'Factor aceleración',        val: accelFactor!=null ? accelFactor.toFixed(2)+'x' : '—',
       cls: accelFactor != null ? (accelFactor > 2 ? 'rs-val-neg' : accelFactor > 1.2 ? 'rs-val-warn' : 'rs-val-ok') : '' },
   ];
@@ -1055,7 +1607,14 @@ function _rsRenderTop5() {
   const el = document.getElementById('rsTop5Panel');
   if (!el) return;
   const areaMap = _buildAreaMap();
-  el.innerHTML = D.topDesvios.slice(0, 5).map((r, i) => {
+  // Use D.critical (same pool as Críticas tab: incidencia > 0.003 && desviacion < -0.05)
+  // Sorted by desviacion ascending (most negative first) — matches Críticas grid
+  const byDesv = [...(D.critical || [])].sort((a, b) => a.desviacion - b.desviacion);
+  const top5 = byDesv.slice(0, 5)
+    .sort((a, b) => _top5SortAsc
+      ? a.desviacion - b.desviacion     // ↑ Mayor primero: most negative deviation first
+      : b.desviacion - a.desviacion);   // ↓ Menor primero: least negative deviation first
+  el.innerHTML = top5.map((r, i) => {
     const name = r.tarea.trim();
     const short = name.length > 40 ? name.slice(0, 40) + '…' : name;
     const area  = _areaOfEdt(r.edt, areaMap);
@@ -1071,13 +1630,37 @@ function _rsRenderTop5() {
   }).join('');
 }
 
+function _rsRenderImpact() {
+  const el = document.getElementById('rsImpactPanel');
+  if (!el) return;
+  const areaMap = _buildAreaMap();
+  // Fixed selection: top 5 by |desvPond| (most impactful negative activities)
+  // D.ranking is already sorted by |desvPond| desc, so just filter neg and slice
+  const top5 = D.ranking.filter(r => r.desvPond < 0).slice(0, 5);
+  el.innerHTML = top5.map((r, i) => {
+    const name   = r.tarea.trim();
+    const short  = name.length > 38 ? name.slice(0, 38) + '…' : name;
+    const area   = _areaOfEdt(r.edt, areaMap);
+    const desvPP = (r.desvPond * 100).toFixed(3); // impact in p.p.
+    return `
+      <div class="rs-top5-item">
+        <span class="rs-top5-rank">${i+1}</span>
+        <div class="rs-top5-info">
+          <div class="rs-top5-name" title="${name}">${short}</div>
+          <div class="rs-top5-meta">${r.edt} · ${area} · Incid: ${pct(r.incidencia,3)}</div>
+        </div>
+        <div class="rs-imp-vals">
+          <span class="rs-imp-dev">${signPct(r.desviacion)}</span>
+          <span class="rs-imp-pond">Imp: <b>${desvPP} p.p.</b></span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
 function _rsRenderLevers() {
   const el = document.getElementById('rsLeversPanel');
   if (!el) return;
-  const levers = [...D.topDesvios]
-    .filter(r => r.desviacion < 0)
-    .sort((a, b) => Math.abs(b.desvPond || 0) - Math.abs(a.desvPond || 0))
-    .slice(0, 5);
+  const levers = D.ranking.filter(r => r.desvPond < 0).slice(0, 5);
   const areaMap = _buildAreaMap();
   el.innerHTML = levers.map((r, i) => {
     const name  = r.tarea.trim();
@@ -1116,7 +1699,7 @@ function _rsRenderMessage(dev, pctReal, recNeeded, reqRate, accelFactor) {
 
   if (accelFactor != null && accelFactor > 1.05) {
     const t2 = accelFactor > 2 ? 'danger' : 'warn';
-    bullets.push({ type:t2, text:`Se debe acelerar el ritmo de trabajo <b>${accelFactor.toFixed(1)}x</b> respecto a la tasa reciente de las últimas 3 semanas.` });
+    bullets.push({ type:t2, text:`Se debe acelerar el ritmo de trabajo <b>${accelFactor.toFixed(1)}x</b> respecto a la tasa reciente de las últimas ${_recRateWeeks} semanas.` });
   } else if (accelFactor != null && accelFactor <= 1.05) {
     bullets.push({ type:'ok', text:`La tasa reciente de avance es suficiente para alcanzar la meta (factor ≈ ${accelFactor != null ? accelFactor.toFixed(2) : '—'}x).` });
   }
@@ -1153,9 +1736,10 @@ function renderResMiniScurve() {
   const planData = sc.map(s => +(s.plan * 100).toFixed(2));
   const realData = sc.map(s => s.real != null ? +(s.real * 100).toFixed(2) : null);
 
-  // Recovery projection: null before currIdx, then project forward
+  // Recovery projection: starts at currIdx, stops exactly at targetIdx
+  // so it visually meets the plan line only at the target week
   const recovData = sc.map((_, i) => {
-    if (currIdx < 0 || i < currIdx) return null;
+    if (currIdx < 0 || i < currIdx || i > targetIdx) return null;
     return +(Math.min(1, pctReal + reqRate * (i - currIdx)) * 100).toFixed(2);
   });
 
@@ -1191,7 +1775,7 @@ function renderResMiniScurve() {
           fill: { target:0, above:'transparent', below:'rgba(192,0,0,.13)' },
           pointRadius:0, tension:0.3, order:2 },
         { label: 'Recuperación req.', data: recovData, borderColor:'#f0a500', borderWidth:2,
-          borderDash:[5,3], fill:false, pointRadius:0, tension:0, order:3 },
+          borderDash:[5,3], fill:false, pointRadius:0, tension:0, spanGaps:false, order:3 },
       ]
     },
     options: {
@@ -1787,39 +2371,52 @@ function renderSinAvanceTable(rows) {
 }
 
 // ── Ranking Bar + Table ───────────────────────────────────────────────────────
-function renderRankingBar(rows) {
-  const rankingBarCanvas = document.getElementById('rankingBarChart');
-  if (!rankingBarCanvas) return;
-  const vals = rows.map(r => +(Math.abs(r.desvPond)*100).toFixed(3));
-  destroyChart('rankingBarChart');
-  charts['rankingBarChart'] = new Chart(rankingBarCanvas, {
-    type:'bar',
-    data:{ labels: rows.map(r => r.edt),
-      datasets:[{ label: t('rk.dataset'), data:vals,
-        backgroundColor: vals.map(v => v>0.5?'rgba(192,0,0,0.7)':v>0.2?'rgba(230,138,0,0.7)':'rgba(0,84,166,0.6)'),
-        borderRadius:3 }]
+function _renderRankingBar(rows, canvasId, isNeg) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+
+  const vals   = rows.map(r => +(Math.abs(r.desvPond) * 100).toFixed(3));
+  const labels = rows.map(r => { const n = r.tarea.trim(); return n.length > 38 ? n.slice(0, 37) + '…' : n; });
+
+  const chartHeight = Math.max(160, rows.length * 34);
+  canvas.parentElement.style.height = chartHeight + 'px';
+
+  destroyChart(canvasId);
+  charts[canvasId] = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{ data: vals, borderRadius: 3,
+        backgroundColor: isNeg
+          ? vals.map(v => v > 0.5 ? 'rgba(192,0,0,0.75)' : v > 0.2 ? 'rgba(230,138,0,0.75)' : 'rgba(0,84,166,0.65)')
+          : vals.map(v => v > 0.5 ? 'rgba(0,132,74,0.8)'  : v > 0.2 ? 'rgba(0,132,74,0.55)' : 'rgba(0,132,74,0.35)'),
+      }]
     },
-    options:{
-      indexAxis:'y', responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{display:false},
-        tooltip:{ callbacks:{ label: ctx => {
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => {
           const r = rows[ctx.dataIndex];
-          return [`Impacto: ${ctx.parsed.x.toFixed(3)}%`, r.tarea.trim().slice(0,50)];
+          return [`Impacto: ${isNeg ? '-' : '+'}${ctx.parsed.x.toFixed(3)}%`, `EDT: ${r.edt}`];
         }}}
       },
-      scales:{ x:{ ticks:{ callback: v => v+'%' } } }
+      scales: {
+        x: { ticks: { callback: v => v + '%' } },
+        y: { ticks: { font: { size: 11 } } }
+      }
     }
   });
 }
 
-function renderRankingTable(rows) {
-  const rankingTableEl = document.getElementById('rankingTable');
-  if (!rankingTableEl) return;
-  rankingTableEl.innerHTML = tableWrap(
+function _renderRankingTable(rows, tableId, isNeg) {
+  const el = document.getElementById(tableId);
+  if (!el) return;
+  el.innerHTML = tableWrap(
     `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.hh')}</th>
      <th>${t('th.incidence')}</th><th>${t('th.pctPlanPond')}</th><th>${t('th.pctRealPond')}</th><th>${t('th.impactPond')}</th>
      <th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>${t('th.clasif')}</th></tr>`,
-    rows.map((r,i) => {
+    rows.map((r, i) => {
       const imp = Math.abs(r.desvPond);
       const cls = imp>0.005?'badge badge-crit':imp>0.002?'badge badge-late':imp>0.0005?'badge badge-warn':'badge badge-ok';
       const lbl = imp>0.005?t('rank.crit'):imp>0.002?t('rank.high'):imp>0.0005?t('rank.mid'):t('rank.low');
@@ -1834,6 +2431,12 @@ function renderRankingTable(rows) {
     }).join('')
   );
 }
+
+/** Public wrappers — called by render() and updateRank() */
+function renderRankingBar(rows)   { _renderRankingBar(rows, 'rankingBarNegChart', true); }
+function renderRankingTable(rows) { _renderRankingTable(rows, 'rankingNegTable', true); }
+function renderRankingBarPos(rows){ _renderRankingBar(rows, 'rankingBarPosChart', false); }
+function renderRankingTablePos(rows){ _renderRankingTable(rows, 'rankingPosTable', false); }
 
 // ── Consolidado (Power Blocks) ────────────────────────────────────────────────
 //
@@ -2572,7 +3175,8 @@ function setupTabFilters() {
     if (!D) return;
     const q = document.getElementById('desvSearch').value.toLowerCase();
     const area = document.getElementById('desvAreaBox').value;
-    const rows = D.topDesvios.filter(r =>
+    const rows = D.ranking.filter(r =>
+      r.desvPond < 0 &&
       (!q    || r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)) &&
       (!area || r.edt.startsWith(area)));
     renderDesviosBar(rows); renderDesviosTable(rows);
@@ -2582,15 +3186,28 @@ function setupTabFilters() {
 
   function updateCrit() {
     if (!D) return;
-    const q = document.getElementById('critSearch').value.toLowerCase();
+    const q    = document.getElementById('critSearch').value.toLowerCase();
     const area = document.getElementById('critAreaBox').value;
-    const rows = D.critical.filter(r =>
+    const sort = (document.getElementById('critSort')?.value) || 'desv_asc';
+
+    let rows = D.critical.filter(r =>
       (!q    || r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)) &&
       (!area || r.edt.startsWith(area)));
+
+    // Apply sort
+    rows = [...rows].sort((a, b) => {
+      if (sort === 'desv_asc')  return a.desviacion - b.desviacion;   // most negative first
+      if (sort === 'desv_desc') return b.desviacion - a.desviacion;   // least negative first
+      if (sort === 'imp_asc')   return a.desvPond   - b.desvPond;     // most negative impact first
+      if (sort === 'imp_desc')  return b.desvPond   - a.desvPond;     // least negative impact first
+      return 0;
+    });
+
     renderCriticasBar(rows); renderCriticasTable(rows);
   }
   on('critSearch',  'input',  updateCrit);
   on('critAreaBox', 'change', updateCrit);
+  on('critSort',    'change', updateCrit);
 
   function updateSin() {
     if (!D) return;
@@ -2606,21 +3223,35 @@ function setupTabFilters() {
 
   function updateRank() {
     if (!D) return;
-    const q      = document.getElementById('rankSearch').value.toLowerCase();
-    const area   = document.getElementById('rankAreaBox').value;
-    const clasif = document.getElementById('rankClasif').value;
-    const rows = D.ranking.filter(r => {
-      const imp = Math.abs(r.desvPond);
-      const c = imp>0.005?'CRITICO':imp>0.002?'ALTO':imp>0.0005?'MEDIO':'BAJO';
-      return (!q      || r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)) &&
-             (!area   || r.edt.startsWith(area)) &&
-             (!clasif || c === clasif);
-    });
-    renderRankingBar(rows.slice(0,20)); renderRankingTable(rows);
+    const q         = document.getElementById('rankSearch').value.toLowerCase();
+    const area      = document.getElementById('rankAreaBox').value;
+    const negImpact = (document.getElementById('rankNegImpact')?.value) || '';
+    const posImpact = (document.getElementById('rankPosImpact')?.value) || '';
+
+    const impactMatch = (r, band) => {
+      if (!band) return true;
+      const pp = Math.abs(r.desvPond) * 100;
+      if (band === 'ALTO')  return pp > 0.2;
+      if (band === 'MEDIO') return pp > 0.05 && pp <= 0.2;
+      if (band === 'BAJO')  return pp <= 0.05;
+      return true;
+    };
+
+    const textArea = r =>
+      (!q    || r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)) &&
+      (!area || r.edt.startsWith(area));
+
+    const negRows = D.ranking.filter(r => r.desvPond < 0 && textArea(r) && impactMatch(r, negImpact));
+    const posRows = D.ranking.filter(r => r.desvPond > 0 && textArea(r) && impactMatch(r, posImpact))
+                             .sort((a, b) => b.desvPond - a.desvPond);
+
+    renderRankingBar(negRows.slice(0, 20));    renderRankingTable(negRows);
+    renderRankingBarPos(posRows.slice(0, 15)); renderRankingTablePos(posRows);
   }
-  on('rankSearch',  'input',  updateRank);
-  on('rankAreaBox', 'change', updateRank);
-  on('rankClasif',  'change', updateRank);
+  on('rankSearch',    'input',  updateRank);
+  on('rankAreaBox',   'change', updateRank);
+  on('rankNegImpact', 'change', updateRank);
+  on('rankPosImpact', 'change', updateRank);
 }
 
 

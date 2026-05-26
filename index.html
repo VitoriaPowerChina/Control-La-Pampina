@@ -7,8 +7,8 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css">
-  <script src="i18n.js"></script>
+  <link rel="stylesheet" href="styles.css?v=3.8">
+  <script src="i18n.js?v=1.7"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -134,6 +134,9 @@
               <span class="rs-meta-val" id="rsMetaSemana">—</span>
             </div>
           </div>
+          <button id="rsExportBtn" class="rs-export-btn" onclick="exportResumenPDF()">
+            <i class="bi bi-file-earmark-pdf-fill"></i> Exportar PDF
+          </button>
         </div>
 
         <!-- ── 6 KPI cards ── -->
@@ -184,12 +187,32 @@
           </div>
         </div>
 
-        <!-- ── Row 3: Top5 | Palancas | Mensaje ── -->
-        <div class="rs-row3">
+        <!-- ── Row 3: Dos paneles de actividades ── -->
+        <div class="rs-row-acts">
+          <!-- Mayor Desvío -->
           <div class="chart-card">
-            <div class="rs-card-hdr">ACTIVIDADES CON MAYOR DESVÍO</div>
+            <div class="rs-card-hdr" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+              <span>ACTIVIDADES CON MAYOR DESVÍO</span>
+              <button id="rsTop5SortBtn" onclick="toggleTop5Sort()" title="Cambiar orden"
+                style="font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;
+                       background:var(--surface);color:var(--text);cursor:pointer;white-space:nowrap">
+                ↑ Mayor primero
+              </button>
+            </div>
             <div id="rsTop5Panel" class="rs-top5-panel"></div>
           </div>
+          <!-- Mayor Impacto -->
+          <div class="chart-card">
+            <div class="rs-card-hdr" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+              <span>ACTIVIDADES CON MAYOR IMPACTO</span>
+              <span style="font-size:10px;color:var(--text-muted);font-weight:500">Ordenado por impacto ↓</span>
+            </div>
+            <div id="rsImpactPanel" class="rs-top5-panel"></div>
+          </div>
+        </div>
+
+        <!-- ── Row 4: Palancas | Mensaje ── -->
+        <div class="rs-row3">
           <div class="chart-card">
             <div class="rs-card-hdr">PALANCAS DE RECUPERACIÓN</div>
             <div id="rsLeversPanel" class="rs-levers-panel"></div>
@@ -327,6 +350,12 @@
         <div class="filters">
           <input id="critSearch" type="search" data-i18n-ph="cr.search" placeholder="Buscar EDT o actividad…">
           <select id="critAreaBox"><option value="">— Todas las áreas —</option></select>
+          <select id="critSort">
+            <option value="desv_asc">Desvío ↑ (mayor primero)</option>
+            <option value="desv_desc">Desvío ↓ (menor primero)</option>
+            <option value="imp_asc">Impacto ↑ (mayor primero)</option>
+            <option value="imp_desc">Impacto ↓ (menor primero)</option>
+          </select>
         </div>
       </div>
       <div style="position:relative;height:280px;margin-bottom:20px">
@@ -369,20 +398,44 @@
         <div class="filters">
           <input id="rankSearch" type="search" data-i18n-ph="rk.search" placeholder="Buscar EDT o actividad…">
           <select id="rankAreaBox"><option value="">— Todas las áreas —</option></select>
-          <select id="rankClasif">
-            <option value="">— Todas las clasif. —</option>
-            <option value="CRITICO">CRÍTICO</option>
-            <option value="ALTO">ALTO</option>
-            <option value="MEDIO">MEDIO</option>
-            <option value="BAJO">BAJO</option>
-          </select>
         </div>
       </div>
-      <p class="subtitle" data-i18n="rk.subtitle">Ordenado por impacto ponderado absoluto en el progreso total</p>
-      <div style="position:relative;height:320px;margin-bottom:20px">
-        <canvas id="rankingBarChart"></canvas>
+
+      <!-- ── Negative section ── -->
+      <div class="rk-section">
+        <div class="rk-section-hdr rk-neg-hdr">
+          <span>▼ Impacto Negativo</span>
+          <small>Actividades que retrasan el avance del proyecto</small>
+          <select id="rankNegImpact" class="rk-section-filter">
+            <option value="">Todos</option>
+            <option value="ALTO">Alto  (&gt; 0.2 p.p.)</option>
+            <option value="MEDIO">Medio (0.05 – 0.2 p.p.)</option>
+            <option value="BAJO">Bajo  (≤ 0.05 p.p.)</option>
+          </select>
+        </div>
+        <div style="position:relative;height:320px;margin-bottom:12px">
+          <canvas id="rankingBarNegChart"></canvas>
+        </div>
+        <div id="rankingNegTable"></div>
       </div>
-      <div id="rankingTable"></div>
+
+      <!-- ── Positive section ── -->
+      <div class="rk-section" style="margin-top:32px">
+        <div class="rk-section-hdr rk-pos-hdr">
+          <span>▲ Impacto Positivo</span>
+          <small>Actividades adelantadas respecto al plan</small>
+          <select id="rankPosImpact" class="rk-section-filter">
+            <option value="">Todos</option>
+            <option value="ALTO">Alto  (&gt; 0.2 p.p.)</option>
+            <option value="MEDIO">Medio (0.05 – 0.2 p.p.)</option>
+            <option value="BAJO">Bajo  (≤ 0.05 p.p.)</option>
+          </select>
+        </div>
+        <div style="position:relative;height:220px;margin-bottom:12px">
+          <canvas id="rankingBarPosChart"></canvas>
+        </div>
+        <div id="rankingPosTable"></div>
+      </div>
     </section>
 
     <!-- ── CONSOLIDADO ──────────────────────────────────────────── -->
@@ -633,85 +686,181 @@
     <!-- ── RECOVERY ANALYSIS ─────────────────────────────────────────── -->
     <section id="tab-recovery" class="tab-pane">
 
-      <!-- Row 1: S-curve (left 60%) + Analysis panel (right 40%) -->
-      <div class="rec-main-grid">
+      <!-- Executive header -->
+      <div class="rec-exec-hdr">
+        <div class="rec-exec-brand">
+          <i class="bi bi-buildings" style="font-size:34px;color:var(--primary)"></i>
+          <div>
+            <div class="rec-exec-brand-name">LA PAMPINA</div>
+            <div class="rec-exec-brand-sub">CONSTRUCCIÓN</div>
+          </div>
+        </div>
+        <div class="rec-exec-title-block">
+          <div class="rec-exec-main-title">RESUMEN EJECUTIVO</div>
+          <div class="rec-exec-sub-title">ESTADO DEL PROYECTO A LA FECHA</div>
+        </div>
+        <div class="rec-exec-meta-block">
+          <div><span class="rec-exec-meta-lbl">FECHA DE CORTE:</span> <b id="recExecFecha">—</b></div>
+          <div><span class="rec-exec-meta-lbl">PROYECTO:</span> Parque Solar Fotovoltaico</div>
+          <div><span class="rec-exec-meta-lbl">SEMANA:</span> <b id="recExecSemana">—</b></div>
+        </div>
+      </div>
 
-        <!-- S-curve chart -->
-        <div class="chart-card rec-curve-card">
+      <!-- KPI cards -->
+      <div class="rec-exec-kpis">
+        <div class="rec-exec-kpi-card">
+          <div class="rec-exec-kpi-lbl">% PLANIFICADO ACUMULADO</div>
+          <div class="rec-exec-kpi-val" id="recKpiPlan">—</div>
+          <div class="rec-exec-kpi-sub">Avance planificado</div>
+        </div>
+        <div class="rec-exec-kpi-card rec-exec-kpi-ok">
+          <div class="rec-exec-kpi-lbl">% REAL ACUMULADO</div>
+          <div class="rec-exec-kpi-val" id="recKpiReal">—</div>
+          <div class="rec-exec-kpi-sub">Avance real</div>
+        </div>
+        <div class="rec-exec-kpi-card rec-exec-kpi-danger">
+          <div class="rec-exec-kpi-lbl">DESVÍO ACTUAL</div>
+          <div class="rec-exec-kpi-val" id="recKpiDesv">—</div>
+          <div class="rec-exec-kpi-sub">Respecto al plan</div>
+        </div>
+        <div class="rec-exec-kpi-card rec-exec-kpi-warn">
+          <div class="rec-exec-kpi-lbl">RECUPERACIÓN REQUERIDA (META)</div>
+          <div class="rec-exec-kpi-val" id="recKpiReq">—</div>
+          <div class="rec-exec-kpi-sub">Para recuperar en <span id="recKpiReqSem">—</span> semanas</div>
+        </div>
+        <div class="rec-exec-kpi-card">
+          <div class="rec-exec-kpi-lbl">FACTOR DE ACELERACIÓN</div>
+          <div class="rec-exec-kpi-val" id="recKpiAccel">—</div>
+          <div class="rec-exec-kpi-sub">Respecto al rendimiento reciente</div>
+        </div>
+        <div class="rec-exec-kpi-card rec-exec-kpi-optim">
+          <div class="rec-exec-kpi-lbl">RECUPERACIÓN OPTIMISTA <i class="bi bi-rocket-takeoff" style="font-size:10px"></i></div>
+          <div class="rec-exec-optim-body">
+            <div class="rec-exec-optim-stat">
+              <div class="rec-exec-optim-lbl">Ritmo simulado</div>
+              <div class="rec-exec-optim-val" id="recKpiOptRate">—</div>
+            </div>
+            <div class="rec-exec-optim-stat">
+              <div class="rec-exec-optim-lbl">Prazo estimado</div>
+              <div class="rec-exec-optim-val" id="recKpiOptWeeks">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls bar — acima da curva S -->
+      <div class="rec-ctrl-bar">
+        <span class="rec-ctrl-lbl" data-i18n="rec.targetLabel">Meta de recuperación:</span>
+        <select id="recTargetWeeks" class="rec-select">
+          <option value="4">4 semanas</option>
+          <option value="7" selected>7 semanas</option>
+          <option value="10">10 semanas</option>
+          <option value="12">12 semanas</option>
+          <option value="16">16 semanas</option>
+        </select>
+        <span class="rec-ctrl-sep">|</span>
+        <span class="rec-ctrl-lbl" data-i18n="rec.targetWeekLbl">Semana objetivo:</span>
+        <span id="recTargetDate" class="rec-meta-date">—</span>
+        <span class="rec-ctrl-sep">|</span>
+        <span class="rec-ctrl-lbl" data-i18n="rec.rateWindowLabel">Prom. rendimiento:</span>
+        <select id="recRateWeeks" class="rec-select">
+          <option value="3" selected>3 semanas</option>
+          <option value="4">4 semanas</option>
+          <option value="5">5 semanas</option>
+          <option value="6">6 semanas</option>
+        </select>
+      </div>
+
+      <!-- Main body: 3 columns -->
+      <div class="rec-exec-body">
+        <!-- S-curve -->
+        <div class="chart-card rec-exec-scurve-col">
           <div class="rec-curve-header">
-            <span class="rec-curve-title" data-i18n="rec.scurveTitle">CURVA S — PROYECTO</span>
+            <span class="rec-curve-title" data-i18n="rec.scurveTitle">CURVA S - PROYECTO</span>
           </div>
           <div class="rec-curve-wrap"><canvas id="recScurveChart"></canvas></div>
         </div>
-
         <!-- Analysis panel -->
-        <div class="chart-card rec-panel-card">
+        <div class="chart-card rec-exec-analysis-col">
           <div class="rec-panel-hdr">
             <span class="rec-panel-title" data-i18n="rec.analysisTitle">ANÁLISIS DE RECUPERACIÓN</span>
             <span class="rec-info-icon" id="recInfoIcon" title="">ⓘ</span>
           </div>
-
-          <!-- Meta + Semana objetivo -->
-          <div class="rec-meta-row">
-            <span class="rec-meta-lbl" data-i18n="rec.targetLabel">Meta de recuperación</span>
-            <select id="recTargetWeeks" class="rec-select">
-              <option value="4">4 semanas</option>
-              <option value="7" selected>7 semanas</option>
-              <option value="10">10 semanas</option>
-              <option value="12">12 semanas</option>
-              <option value="16">16 semanas</option>
-            </select>
-            <span class="rec-meta-sep">|</span>
-            <span class="rec-meta-lbl" data-i18n="rec.targetWeekLbl">Semana objetivo:</span>
-            <span id="recTargetDate" class="rec-meta-date">—</span>
-          </div>
-
-          <!-- Metric rows -->
           <div id="recAnalysisRows" class="rec-analysis-rows-panel"></div>
-
-          <!-- Status badge + note -->
           <div class="rec-status-wrap">
             <span id="recStatusBadge" class="rec-status-badge rec-status-danger">—</span>
           </div>
           <div id="recStatusNote" class="rec-status-note"></div>
         </div>
-
-      </div><!-- /rec-main-grid -->
-
-      <!-- Row 2: Scenarios + Weekly bar -->
-      <div class="two-col" style="margin-top:16px">
-
-        <div class="chart-card">
-          <h2 data-i18n="rec.scenariosTitle">Escenarios de Recuperación</h2>
-          <div id="recScenariosTable"></div>
+        <!-- Donut + area table -->
+        <div class="chart-card rec-exec-donut-col">
+          <div class="rec-panel-hdr">
+            <span class="rec-panel-title">DISTRIBUCIÓN DEL DESVÍO POR ÁREA</span>
+          </div>
+          <div style="position:relative;height:150px;width:100%;margin-bottom:8px">
+            <canvas id="recDesvAreaDonut"></canvas>
+          </div>
+          <div id="recDesvAreaTable"></div>
+          <div class="rec-desv-total-row" id="recDesvTotalRow"></div>
         </div>
+      </div>
 
+      <!-- Bottom: activities | levers + message -->
+      <div class="rec-exec-bottom">
+        <!-- Top activities -->
         <div class="chart-card">
-          <h2 data-i18n="rec.weeklyTitle">Incremento Semanal — Últimas 10 semanas</h2>
+          <div class="rec-exec-section-title">PRINCIPALES ACTIVIDADES QUE MÁS CONTRIBUYEN AL DESVÍO</div>
+          <div id="recTopActivities"></div>
+          <div class="rec-exec-note" id="recActivitiesNote"></div>
+        </div>
+        <!-- Levers + message (stacked) -->
+        <div class="rec-exec-right-stack">
+          <div class="chart-card">
+            <div class="rec-exec-section-title">PRINCIPALES PALANCAS DE RECUPERACIÓN</div>
+            <div id="recLeversTable"></div>
+            <div class="rec-exec-note" id="recLeversNote"></div>
+          </div>
+          <div class="chart-card">
+            <div class="rec-exec-section-title">MENSAJE EJECUTIVO <i class="bi bi-chat-quote" style="font-size:12px;opacity:.6"></i></div>
+            <div id="recMessagePanel" class="rec-message-content"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detail row: weekly + projection (kept for detailed analysis) -->
+      <div class="two-col" style="margin-top:16px">
+        <div class="chart-card">
+          <h2 data-i18n="rec.weeklyTitle">Incremento Semanal — Ritmo vs. Requerido</h2>
           <canvas id="recWeeklyChart" height="200"></canvas>
           <div id="recWeeklyFooter" class="rec-chart-footer"></div>
         </div>
-
-      </div>
-
-      <!-- Row 3: Projection table -->
-      <div class="chart-card" style="margin-top:16px">
-        <h2 data-i18n="rec.projTitle">Proyección Semanal (próx. 12 semanas)</h2>
-        <div class="grid-wrap" style="margin-top:10px">
-          <table id="recProjTable">
-            <thead>
-              <tr>
+        <div class="chart-card">
+          <h2 id="recProjTitleEl" data-i18n="rec.projTitle">Proyección Semanal</h2>
+          <div class="grid-wrap" style="margin-top:10px">
+            <table id="recProjTable">
+              <thead><tr>
                 <th data-i18n="rec.th.week">Semana</th>
                 <th data-i18n="rec.th.planAcum">Plan Acum.</th>
                 <th data-i18n="rec.th.realProj">Real Proyectado</th>
                 <th data-i18n="rec.th.realReq">Real Requerido</th>
                 <th data-i18n="rec.th.devEsp">Desvío Esperado</th>
                 <th data-i18n="rec.th.addVsReal">Adicional vs. Real</th>
-              </tr>
-            </thead>
-            <tbody id="recProjBody"></tbody>
-          </table>
+              </tr></thead>
+              <tbody id="recProjBody"></tbody>
+            </table>
+          </div>
         </div>
+      </div>
+
+      <!-- Scenarios (compact) -->
+      <div class="chart-card" style="margin-top:16px">
+        <h2 data-i18n="rec.scenariosTitle">Escenarios de Recuperación</h2>
+        <div id="recScenariosTable"></div>
+      </div>
+
+      <!-- Footer legend -->
+      <div class="rec-exec-footer-legend">
+        p.p.: puntos porcentuales &nbsp;|&nbsp; <span id="recFooterLegend">—</span>
       </div>
 
     </section><!-- /tab-recovery -->
@@ -721,6 +870,6 @@
   </div><!-- /layout -->
 </div><!-- /app -->
 
-<script src="app.js"></script>
+<script src="app.js?v=3.8"></script>
 </body>
 </html>
