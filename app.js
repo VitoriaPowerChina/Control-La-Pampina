@@ -12,6 +12,7 @@ let _consolTree = null;
 let _simRows    = new Map(); // edt → delta (number: PBs or percentage points)  — Escenarios tab
 let _simTabRows = [];        // { edt, delta, mode:'pb'|'pct' }                   — Simulador tab
 let _simTabMode = 'pb';      // current add-form mode in Simulador tab
+let _recTargetWeeks = 7;     // Recovery analysis — target weeks for the analysis
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -21,9 +22,9 @@ document.addEventListener('DOMContentLoaded', () => {
   setupSimTab();
   setupArbol();
   setupConsolidado();
-  setupTableFilters();
   setupTabFilters();
   setupPdfExports();
+  setupRecovery();
 });
 
 // ── Theme toggle ─────────────────────────────────────────────────────────────
@@ -211,6 +212,386 @@ function calcStatus(r) {
   return 'notStarted';
 }
 
+// ── Recovery Analysis ─────────────────────────────────────────────────────────
+
+/** Setup the target-weeks dropdown */
+function setupRecovery() {
+  const sel = document.getElementById('recTargetWeeks');
+  if (sel) {
+    sel.addEventListener('change', () => {
+      _recTargetWeeks = parseInt(sel.value, 10) || 7;
+      if (D) _tryRender(renderRecovery);
+    });
+  }
+}
+
+/**
+ * Simulate forward from currIdx at a fixed weeklyRate; return weeks needed to reach 100%.
+ * Uses S-curve planned increments in Phase 1 (but only the rate matters here, not
+ * the plan shape). Returns null if rate is zero/invalid.
+ */
+function _weeksToRecover(sc, currIdx, pctReal, weeklyRate) {
+  if (!weeklyRate || weeklyRate <= 0) return null;
+  let proj = pctReal;
+  // Phase 1: advance week by week inside the S-curve
+  for (let i = currIdx + 1; i < sc.length; i++) {
+    proj += weeklyRate;
+    if (proj >= 1.0) return i - currIdx;
+  }
+  // Phase 2: beyond plan end
+  const remaining = 1 - proj;
+  if (remaining <= 0) return sc.length - 1 - currIdx;
+  return (sc.length - 1 - currIdx) + Math.ceil(remaining / weeklyRate);
+}
+
+/** Average real weekly increment over the last n data points */
+function _recRecentRate(sc, currIdx, n) {
+  n = n || 4;
+  const pts = [];
+  for (let i = Math.max(0, currIdx - n); i <= currIdx; i++) {
+    if (sc[i] && sc[i].real != null) pts.push(sc[i].real);
+  }
+  if (pts.length < 2) return 0;
+  return (pts[pts.length - 1] - pts[0]) / (pts.length - 1);
+}
+
+/** Master render for the Recovery tab */
+function renderRecovery() {
+  if (!D) return;
+  const sc = D.scurve;
+  const currIdx = sc.findIndex(s => s.isCurrent);
+  if (currIdx < 0) return;
+
+  const pctPlan = sc[currIdx].plan || 0;
+  const pctReal = sc[currIdx].real || 0;
+
+  // Target week in S-curve
+  const targetIdx      = Math.min(sc.length - 1, currIdx + _recTargetWeeks);
+  const planAtTarget   = sc[targetIdx]?.plan || 0;
+  const recNeeded      = Math.max(0, planAtTarget - pctReal);   // gap to close
+  const reqRate        = _recTargetWeeks > 0 ? recNeeded / _recTargetWeeks : 0;
+
+  // Target date label
+  const targetDateRaw  = sc[targetIdx]?.date;
+  const _loc = _lang === 'zh' ? 'zh-CN' : _lang === 'en' ? 'en-US' : 'es-CL';
+  const targetDateLbl  = targetDateRaw
+    ? new Date(targetDateRaw + 'T12:00:00').toLocaleDateString(_loc, { day:'2-digit', month:'2-digit', year:'numeric' })
+    : '—';
+
+  // Recent rate: last 3 weeks
+  const recentRate     = _recRecentRate(sc, currIdx, 3);
+  const accelAdd       = reqRate - recentRate;
+  const accelFactor    = recentRate > 0 ? reqRate / recentRate : null;
+
+  // Average planned rate for remaining weeks (for scenarios)
+  const weeksLeft      = sc.length - 1 - currIdx;
+  const planRemaining  = (sc[sc.length - 1].plan || 1) - pctPlan;
+  const planRate       = weeksLeft > 0 ? planRemaining / weeksLeft : 0;
+
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const ppR = v => v != null ? (v * 100).toFixed(2) + ' p.p./sem' : '—';
+  const ppV = v => v != null ? (v * 100).toFixed(2) + ' p.p.' : '—';
+
+  // ── Target date label ────────────────────────────────────────────────────
+  set('recTargetDate', targetDateLbl);
+
+  // ── Analysis rows panel ──────────────────────────────────────────────────
+  const rowsEl = document.getElementById('recAnalysisRows');
+  if (rowsEl) {
+    const mkRow = (lbl, val, valCls = '') => `
+      <div class="rec-panel-row">
+        <span class="rec-panel-row-lbl">${lbl}</span>
+        <span class="rec-panel-row-val ${valCls}">${val}</span>
+      </div>`;
+    const reqRateHtml = `
+      <div class="rec-panel-row rec-panel-row-highlight">
+        <span class="rec-panel-row-lbl">${t('rec.row.reqRate')}</span>
+        <span class="rec-panel-row-val" style="color:var(--primary)">${ppR(reqRate)}</span>
+      </div>`;
+    const accelCls  = accelAdd > 0 ? 'rec-val-danger' : 'rec-val-ok';
+    const factorCls = accelFactor != null && accelFactor > 1.5 ? 'rec-val-danger'
+                    : accelFactor != null && accelFactor > 1.1 ? 'rec-val-warn' : 'rec-val-ok';
+
+    rowsEl.innerHTML =
+      mkRow(t('rec.row.planAtTarget'), (planAtTarget * 100).toFixed(2) + '%') +
+      mkRow(t('rec.row.realNow'),      (pctReal * 100).toFixed(2) + '%') +
+      mkRow(t('rec.row.recNeeded'),    ppV(recNeeded)) +
+      reqRateHtml +
+      mkRow(t('rec.row.realRate'),     ppR(recentRate), 'rec-val-warn') +
+      mkRow(t('rec.row.accelAdd'),     ppR(accelAdd),   accelCls) +
+      mkRow(t('rec.row.accelFactor'),  accelFactor != null ? accelFactor.toFixed(2) + '×' : '—', factorCls);
+  }
+
+  // ── Status badge ─────────────────────────────────────────────────────────
+  const badge = document.getElementById('recStatusBadge');
+  const note  = document.getElementById('recStatusNote');
+  if (badge) {
+    if (accelFactor == null || recNeeded <= 0) {
+      badge.textContent = t('rec.feasible');
+      badge.className = 'rec-status-badge rec-status-ok';
+      if (note) note.textContent = t('rec.sum.feasible').replace(/<[^>]+>/g, '');
+    } else if (accelFactor > 1.5) {
+      badge.textContent = t('rec.statusCrit');
+      badge.className = 'rec-status-badge rec-status-danger';
+      if (note) note.textContent = t('rec.notesCrit');
+    } else if (accelFactor > 1.1) {
+      badge.textContent = t('rec.statusWarn');
+      badge.className = 'rec-status-badge rec-status-warn';
+      if (note) note.textContent = t('rec.notesWarn');
+    } else {
+      badge.textContent = t('rec.statusOk');
+      badge.className = 'rec-status-badge rec-status-ok';
+      if (note) note.textContent = t('rec.notesOk');
+    }
+  }
+
+  // ── Scenarios table ──────────────────────────────────────────────────────
+  const scenEl = document.getElementById('recScenariosTable');
+  if (scenEl) {
+    const scenarios = [
+      { name: t('rec.scen.current'),   rate: recentRate },
+      { name: t('rec.scen.moderate'),  rate: (recentRate + reqRate) / 2 },
+      { name: t('rec.scen.required'),  rate: reqRate,     hl: true },
+      { name: t('rec.scen.accel'),     rate: reqRate * 1.2 },
+      { name: t('rec.scen.intensive'), rate: reqRate * 1.5 },
+    ];
+    const scenRows = scenarios.map(s => {
+      const wks     = _weeksToRecover(sc, currIdx, pctReal, s.rate);
+      const netGain = s.rate - planRate;
+      const dot     = s.rate <= 0 ? 'danger' : s.rate >= reqRate ? 'ok' : 'warn';
+      const netCls  = netGain >= 0 ? 'rec-val-ok' : 'rec-val-danger';
+      return `<tr ${s.hl ? 'class="rec-scen-hl"' : ''}>
+        <td><strong>${s.name}</strong></td>
+        <td>${(s.rate * 100).toFixed(2)}</td>
+        <td class="${netCls}">${netGain >= 0 ? '+' : ''}${(netGain * 100).toFixed(2)}</td>
+        <td>${wks != null ? wks : '—'}</td>
+        <td><span class="rec-dot rec-dot-${dot}"></span></td>
+      </tr>`;
+    }).join('');
+    scenEl.innerHTML = `<table class="rec-scen-table">
+      <thead><tr>
+        <th>${t('rec.scen.hdrName')}</th>
+        <th>${t('rec.scen.hdrRate')}<br><small>p.p./sem</small></th>
+        <th>${t('rec.scen.hdrNet')}<br><small>p.p./sem</small></th>
+        <th>${t('rec.scen.hdrWeeks')}</th>
+        <th>${t('rec.scen.hdrFeas')}</th>
+      </tr></thead>
+      <tbody>${scenRows}</tbody>
+    </table>`;
+  }
+
+  // ── Projection table ─────────────────────────────────────────────────────
+  const projBody = document.getElementById('recProjBody');
+  if (projBody) {
+    let projReal = pctReal, projReq = pctReal, rows = '';
+    for (let i = 1; i <= 12; i++) {
+      const scIdx   = currIdx + i;
+      projReal     += recentRate;
+      projReq      += reqRate;
+      const planAcum = scIdx < sc.length ? sc[scIdx].plan : null;
+      const devEsp   = planAcum != null ? projReal - planAcum : null;
+      const addReal  = projReq - projReal;
+      const fPct = v => (Math.min(1, Math.max(0, v)) * 100).toFixed(2) + '%';
+      const fDev = v => v == null ? '—'
+        : `<span style="color:${v >= 0 ? 'var(--success)' : 'var(--danger)'}">${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%</span>`;
+      const fAdd = v =>
+        `<span style="color:${v > 0.0002 ? 'var(--danger)' : v < -0.0002 ? 'var(--success)' : 'var(--text-muted)'}">${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%</span>`;
+      const weekLbl = scIdx < sc.length ? (sc[scIdx].week || `+${i}`) : `+${i}`;
+      rows += `<tr>
+        <td>${weekLbl}</td>
+        <td>${planAcum != null ? fPct(planAcum) : '—'}</td>
+        <td>${fPct(projReal)}</td>
+        <td>${fPct(projReq)}</td>
+        <td>${fDev(devEsp)}</td>
+        <td>${fAdd(addReal)}</td>
+      </tr>`;
+    }
+    projBody.innerHTML = rows;
+  }
+
+  // ── Charts ───────────────────────────────────────────────────────────────
+  _tryRender(renderRecScurve);
+  _tryRender(renderRecWeekly);
+}
+
+/** S-curve: plan / real / trend (sim.) / required (sim.) + fill between + cutoff line */
+function renderRecScurve() {
+  const canvas = document.getElementById('recScurveChart');
+  if (!canvas || !D) return;
+
+  const sc         = D.scurve;
+  const currIdx    = sc.findIndex(s => s.isCurrent);
+  if (currIdx < 0) return;
+
+  const pctReal    = sc[currIdx].real || 0;
+  const recentRate = _recRecentRate(sc, currIdx, 3);
+  const targetIdx  = Math.min(sc.length - 1, currIdx + _recTargetWeeks);
+  const planAtTgt  = sc[targetIdx]?.plan || 0;
+  const recNeeded  = Math.max(0, planAtTgt - pctReal);
+  const reqRate    = _recTargetWeeks > 0 ? recNeeded / _recTargetWeeks : 0;
+
+  const labels   = sc.map(s => s.week);
+  const planData = sc.map(s => +(s.plan * 100).toFixed(2));
+  const realData = sc.map(s => s.real != null ? +(s.real * 100).toFixed(2) : null);
+
+  // Trend from currIdx (at current pace)
+  const trendData = sc.map((_, i) => {
+    if (i < currIdx) return null;
+    return +(Math.min(1, pctReal + recentRate * (i - currIdx)) * 100).toFixed(2);
+  });
+  // Required (requerido) from currIdx — fills area against trend
+  const reqData = sc.map((_, i) => {
+    if (i < currIdx) return null;
+    return +(Math.min(1, pctReal + reqRate * (i - currIdx)) * 100).toFixed(2);
+  });
+
+  // Inline plugin: vertical "Fecha de corte" line at currIdx
+  const cutoffPlugin = {
+    id: 'recCutoff',
+    afterDraw(chart) {
+      const meta = chart.getDatasetMeta(0);
+      const pt   = meta?.data?.[currIdx];
+      if (!pt) return;
+      const { ctx, chartArea, scales } = chart;
+      const x = pt.x;
+      ctx.save();
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = 'rgba(100,116,139,.6)';
+      ctx.lineWidth   = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x, chartArea.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Label
+      ctx.fillStyle  = 'rgba(100,116,139,.9)';
+      ctx.font       = 'bold 9px sans-serif';
+      ctx.textAlign  = 'center';
+      ctx.fillText(t('rec.cutoffLbl'), x, chartArea.top - 2);
+      ctx.restore();
+    }
+  };
+
+  destroyChart('recScurveChart');
+  charts['recScurveChart'] = new Chart(canvas, {
+    type: 'line',
+    plugins: [cutoffPlugin],
+    data: {
+      labels,
+      datasets: [
+        { label: t('rec.lbl.plan'),
+          data: planData, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,.07)',
+          borderWidth: 2, pointRadius: 0, fill: false, tension: 0.3, order: 4 },
+        { label: t('rec.lbl.real'),
+          data: realData, borderColor: '#16a34a', backgroundColor: 'transparent',
+          borderWidth: 2.5, pointRadius: 0, fill: false, tension: 0.3, spanGaps: false, order: 3 },
+        // dataset index 2 — trend (lower simulation)
+        { label: t('rec.lbl.trend'),
+          data: trendData, borderColor: '#f59e0b', backgroundColor: 'transparent',
+          borderWidth: 1.5, borderDash: [5, 3], pointRadius: 0, fill: false, tension: 0.2, order: 2 },
+        // dataset index 3 — required (upper simulation) — fills DOWN to dataset 2 (trend)
+        { label: t('rec.lbl.required'),
+          data: reqData, borderColor: '#e11d48', backgroundColor: 'rgba(148,163,184,.18)',
+          borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0,
+          fill: { target: 2, above: 'rgba(148,163,184,.15)', below: 'transparent' },
+          tension: 0.2, order: 1 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,   // container .rec-curve-wrap provides fixed height
+      layout: { padding: { top: 14 } },
+      plugins: {
+        legend: { display: true, position: 'top',
+          labels: { boxWidth: 14, font: { size: 11 }, padding: 14 } },
+        tooltip: {
+          mode: 'index', intersect: false,
+          callbacks: {
+            afterBody(items) {
+              const i = items[0]?.dataIndex;
+              if (i == null) return [];
+              const lines = [];
+              if (i === currIdx) {
+                lines.push(`── ${t('rec.cutoffLbl')} ──`);
+                lines.push(`${t('rec.row.planAtTarget')}: ${(planAtTgt * 100).toFixed(2)}%`);
+                lines.push(`${t('rec.row.recNeeded')}: ${(recNeeded * 100).toFixed(2)} p.p.`);
+              }
+              return lines;
+            }
+          }
+        },
+      },
+      scales: {
+        y: { min: 0, max: 100, ticks: { callback: v => v + '%' } },
+        x: { ticks: { maxTicksLimit: 14, maxRotation: 30, font: { size: 10 } } },
+      },
+      interaction: { mode: 'index', intersect: false },
+    },
+  });
+}
+
+/** Incremental weekly bar chart for Recovery tab */
+function renderRecWeekly() {
+  const canvas = document.getElementById('recWeeklyChart');
+  if (!canvas || !D) return;
+
+  const sc      = D.scurve;
+  const currIdx = sc.findIndex(s => s.isCurrent);
+  if (currIdx < 0) return;
+
+  const nWeeks     = 10;
+  const sliceStart = Math.max(0, currIdx - nWeeks + 1);
+  const slice      = sc.slice(sliceStart, currIdx + 1);
+
+  const labels   = slice.map(s => s.week);
+  const planInc  = slice.map((_, i) => {
+    const gi   = sliceStart + i;
+    const prev = gi > 0 ? (sc[gi - 1].plan || 0) : 0;
+    return +((sc[gi].plan - prev) * 100).toFixed(3);
+  });
+  const realInc  = slice.map((s, i) => {
+    if (s.real == null) return null;
+    const gi   = sliceStart + i;
+    const prev = gi > 0 ? (sc[gi - 1].real || 0) : 0;
+    return +((s.real - prev) * 100).toFixed(3);
+  });
+
+  const validReal = realInc.filter(v => v != null);
+  const avgReal   = validReal.length ? validReal.reduce((a, b) => a + b, 0) / validReal.length : 0;
+
+  // Footer text (no annotation plugin)
+  const footer = document.getElementById('recWeeklyFooter');
+  if (footer) {
+    footer.innerHTML = `${t('rec.lbl.avgRate')}: <b>${avgReal.toFixed(3)}%</b> &nbsp;|&nbsp; ${t('rec.lbl.reqRate')}: <b>${(_recTargetWeeks > 0 ? ((1 - (sc[currIdx].real || 0)) / _recTargetWeeks * 100).toFixed(3) : '—')}%</b> /sem`;
+  }
+
+  destroyChart('recWeeklyChart');
+  charts['recWeeklyChart'] = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: t('rec.lbl.plan'), data: planInc,
+          backgroundColor: 'rgba(37,99,235,.35)', borderColor: '#2563eb', borderWidth: 1 },
+        { label: t('rec.lbl.real'), data: realInc,
+          backgroundColor: 'rgba(22,163,74,.5)',  borderColor: '#16a34a', borderWidth: 1 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { display: true, position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+      scales: {
+        y: { min: 0, ticks: { callback: v => v + '%' } },
+        x: { ticks: { maxRotation: 30, font: { size: 10 } } },
+      },
+    },
+  });
+}
+
 // ── Render ────────────────────────────────────────────────────────────────────
 function _tryRender(fn, ...args) {
   try { fn(...args); } catch(e) { console.error('[render] ' + fn.name, e); }
@@ -219,10 +600,9 @@ function _tryRender(fn, ...args) {
 function render() {
   _tryRender(renderKPIs);
   _tryRender(renderResumen);
+  _tryRender(renderResMiniScurve);
+  _tryRender(renderRsDesvAreaDonut);
   _tryRender(renderAreaChart);
-  _tryRender(renderStatusDonut);
-  _tryRender(renderWeeklyBar);
-  _tryRender(renderTop5);
   _tryRender(renderScurve);
   _tryRender(renderAreasBar);
   _tryRender(renderAreasTable);
@@ -235,6 +615,7 @@ function render() {
   _tryRender(renderRankingBar, D.ranking.slice(0, 20));
   _tryRender(renderRankingTable, D.ranking);
   _tryRender(renderConsolidado);
+  _tryRender(renderRecovery);
   try { populateAreaDropdowns(); } catch(e) { console.error('[render] populateAreaDropdowns', e); }
   try { _consolTree = buildConsolTree(); } catch(e) { console.error('[render] buildConsolTree', e); }
   try { buildCascadeFilters(); } catch(e) { console.error('[render] buildCascadeFilters', e); }
@@ -244,7 +625,6 @@ function render() {
   _tryRender(initArbol);
   _tryRender(renderArbol);
   _tryRender(renderFuture);
-  _tryRender(renderTabla);
   _tryRender(renderDesviosPorAreas);
 }
 
@@ -411,93 +791,6 @@ function renderDesviosPorAreas() {
     }
   }
 
-  // ── Evolution line chart ───────────────────────────────────────────────────
-  // Collect scurve weeks with real > 0
-  const validWeekIdxs = D.scurve
-    .map((s, i) => ({ s, i }))
-    .filter(({ s, i }) => i <= currIdx && s.real != null && s.real > 0)
-    .map(({ i }) => i);
-
-  // Build monthly labels: last week of each month gets a label, others empty
-  const monthLabels = validWeekIdxs.map((wi, pos) => {
-    const date = D.scurve[wi].date;
-    if (!date) return D.scurve[wi].week || '';
-    const mo = date.slice(0, 7); // "YYYY-MM"
-    // Is this the last occurrence of this month?
-    const isLast = pos === validWeekIdxs.length - 1 ||
-      D.scurve[validWeekIdxs[pos + 1]].date?.slice(0, 7) !== mo;
-    if (isLast) {
-      const [y, m] = date.split('-');
-      const monthNames = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-      return monthNames[parseInt(m, 10)] + ' ' + y.slice(2);
-    }
-    return '';
-  });
-
-  // Per-area deviation series
-  const evolutionDatasets = areaData.map((d, i) => {
-    const data = validWeekIdxs.map(wi => {
-      const planV = d.area.planSeries?.[wi] || 0;
-      const realV = d.area.realSeries?.[wi] || 0;
-      if (realV <= 0) return null;
-      return +((realV - planV) * 100).toFixed(3);
-    });
-    return {
-      label: d.area.tarea.trim().slice(0, 24),
-      data,
-      borderColor: d.color,
-      backgroundColor: 'transparent',
-      pointRadius: 0,
-      tension: 0.3,
-      borderWidth: 2,
-      spanGaps: false,
-    };
-  });
-
-  // Zero reference line
-  evolutionDatasets.push({
-    label: 'Referencia 0',
-    data: validWeekIdxs.map(() => 0),
-    borderColor: 'rgba(100,116,139,0.4)',
-    backgroundColor: 'transparent',
-    pointRadius: 0,
-    tension: 0,
-    borderWidth: 1,
-    borderDash: [4, 4],
-  });
-
-  destroyChart('dvEvolutionChart');
-  const dvEvoCanvas = document.getElementById('dvEvolutionChart');
-  if (dvEvoCanvas) {
-    charts['dvEvolutionChart'] = new Chart(dvEvoCanvas, {
-      type: 'line',
-      data: { labels: monthLabels, datasets: evolutionDatasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: {
-            position: 'bottom',
-            labels: { boxWidth: 10, font: { size: 10 }, padding: 8 }
-          },
-          tooltip: {
-            callbacks: {
-              label: ctx => {
-                const v = ctx.parsed.y;
-                if (v == null) return null;
-                return ctx.dataset.label + ': ' + (v >= 0 ? '+' : '') + v.toFixed(2) + ' p.p.';
-              }
-            }
-          }
-        },
-        scales: {
-          x: { ticks: { font: { size: 10 }, maxRotation: 45 } },
-          y: { ticks: { callback: v => (v >= 0 ? '+' : '') + v.toFixed(1) + ' p.p.' } }
-        }
-      }
-    });
-  }
 
   // ── Status table ──────────────────────────────────────────────────────────
   const statusRows = areaData.map(d => {
@@ -525,6 +818,86 @@ function renderDesviosPorAreas() {
 }
 
 // ── KPIs ──────────────────────────────────────────────────────────────────────
+// ── Forecast computation (shared between KPIs and Resumo) ─────────────────────
+function _computeForecast() {
+  if (!D) return { spi: null, trend: '—', base: '—', wksOver: null, R: null, P: null, projAtEnd: null, extraRate: null };
+  const _loc = _lang === 'zh' ? 'zh-CN' : _lang === 'en' ? 'en-US' : 'es-CL';
+  const sc = D.scurve;
+  const realPts = sc.filter(s => s.real != null && s.real > 0);
+  let forecastTrend = '—', forecastSPI = null, forecastWksOver = null;
+  let diagR = null, diagP = null, diagProjAtEnd = null, diagExtraRate = null;
+
+  if (realPts.length >= 1) {
+    const lastRealPt = realPts[realPts.length - 1];
+    const R = lastRealPt.real;
+    const currPtIdx = sc.indexOf(lastRealPt);
+    const P = sc[currPtIdx]?.plan || 0;
+    diagR = R; diagP = P;
+
+    if (R > 0 && P > 0 && R < 1) {
+      forecastSPI = R / P;                              // IDP = real ÷ planejado
+      let projected = R;
+      let forecastDate = null;
+
+      // ── Fase 1: dentro do prazo base — IDP × incremento planejado ──────────
+      for (let i = currPtIdx + 1; i < sc.length; i++) {
+        const inc = (sc[i].plan || 0) - (sc[i - 1].plan || 0);
+        projected += inc * forecastSPI;
+        if (projected >= 1.0) {
+          forecastDate = new Date((sc[i].date || sc[sc.length - 1].date) + 'T12:00:00');
+          forecastWksOver = 0;
+          break;
+        }
+      }
+      diagProjAtEnd = projected;                        // % real projetado no fim do prazo base
+
+      // ── Fase 2: além do prazo base ────────────────────────────────────────
+      // Usa a mesma lógica da Fase 1 (IDP × taxa planejada), mas com a taxa
+      // planejada MÉDIA de todo o trecho restante — sem janela arbitrária.
+      // Equivale a: ritmo real acumulado ÷ semanas totais com dados.
+      if (!forecastDate) {
+        let weeklyRate = 0;
+
+        // IDP × taxa planejada média de todo o período restante
+        // (consistente com Fase 1 e não depende de nenhuma janela)
+        const wksLeft  = sc.length - currPtIdx - 1;
+        const workLeft = (sc[sc.length - 1].plan || 0) - P;
+        if (wksLeft > 0 && workLeft > 0) {
+          weeklyRate = (workLeft / wksLeft) * forecastSPI;
+        }
+
+        // Fallback: taxa real média de toda a história disponível
+        if (weeklyRate <= 0 && realPts.length > 0) {
+          weeklyRate = realPts[realPts.length - 1].real / realPts.length;
+        }
+
+        diagExtraRate = weeklyRate;
+        if (weeklyRate > 0) {
+          const weeksExtra = Math.ceil((1 - projected) / weeklyRate);
+          forecastWksOver  = weeksExtra;
+          const base = new Date(sc[sc.length - 1].date + 'T12:00:00');
+          base.setDate(base.getDate() + weeksExtra * 7);
+          forecastDate = base;
+        }
+      }
+
+      if (forecastDate) {
+        forecastTrend = forecastDate.toLocaleDateString(_loc, { month: 'short', year: 'numeric' });
+      }
+    }
+  }
+
+  const endLB = D.meta.endLB;
+  let forecastBase = '—';
+  if (endLB) {
+    forecastBase = new Date(endLB + 'T12:00:00').toLocaleDateString(_loc, { month: 'short', year: 'numeric' });
+  }
+  return {
+    spi: forecastSPI, trend: forecastTrend, base: forecastBase, wksOver: forecastWksOver,
+    R: diagR, P: diagP, projAtEnd: diagProjAtEnd, extraRate: diagExtraRate,
+  };
+}
+
 function renderKPIs() {
   const m = D.meta;
   set('kPlan',    pct(m.pctPlan));
@@ -541,128 +914,348 @@ function renderKPIs() {
     devEl.classList.toggle('positive',  m.desvio >= 0);
   }
 
-  const realPts = D.scurve.filter(s => s.real != null && s.real > 0);
-  let forecast = '—';
-  if (realPts.length >= 2) {
-    const last = realPts[realPts.length - 1];
-    const prev = realPts[realPts.length - 2];
-    const rate = last.real - prev.real;
-    if (rate > 0) {
-      const weeks = Math.round((1 - last.real) / rate);
-      const d = new Date(last.date);
-      d.setDate(d.getDate() + weeks * 7);
-      forecast = d.toLocaleDateString('es-CL', { month: 'short', year: 'numeric' });
-    }
+  // ── Dual forecast ─────────────────────────────────────────────────────────
+  const _loc = _lang === 'zh' ? 'zh-CN' : _lang === 'en' ? 'en-US' : 'es-CL';
+  const fc = _computeForecast();
+  const { spi: forecastSPI, trend: forecastTrend, base: forecastBase, wksOver: forecastWksOver } = fc;
+
+  set('kForecastTrend', forecastTrend);
+  const baseEl = document.getElementById('kForecastBase');
+  if (baseEl) baseEl.textContent = forecastBase;
+
+  // Build balloon HTML — with full calculation trace
+  const spiStr  = forecastSPI != null ? forecastSPI.toFixed(3) : '—';
+  const wksStr  = forecastWksOver != null
+    ? (forecastWksOver === 0
+        ? `✔ ${t('kpi.withinPlan')}`
+        : `+${forecastWksOver.toLocaleString()} ${t('kpi.trendWeeks')}`)
+    : '—';
+  const traceRows = fc.R != null ? `
+    <div class="kpi-balloon-trace">
+      <div>% Real: <b>${pct(fc.R)}</b> &nbsp;|&nbsp; % Plan: <b>${pct(fc.P)}</b></div>
+      ${fc.projAtEnd != null ? `<div>Proj. no fim LB: <b>${pct(fc.projAtEnd)}</b></div>` : ''}
+      ${fc.extraRate  != null && forecastWksOver > 0 ? `<div>Taxa extrapol.: <b>${(fc.extraRate * 100).toFixed(3)}%/sem</b></div>` : ''}
+    </div>` : '';
+  const balloonHtml = `
+    <div class="kpi-balloon-section">
+      <div class="kpi-balloon-title">📈 ${t('kpi.trendProj')}</div>
+      <div class="kpi-balloon-val">${forecastTrend}</div>
+      <div class="kpi-balloon-desc">
+        <strong>${t('kpi.spiLabel')} = ${spiStr}</strong> <span style="opacity:.7">(${t('kpi.spiDesc')})</span><br>
+        ${t('kpi.trendMethod')}<br>
+        <strong>${wksStr}</strong>
+      </div>
+      ${traceRows}
+    </div>
+    <hr class="kpi-balloon-divider">
+    <div class="kpi-balloon-section">
+      <div class="kpi-balloon-title">📋 ${t('kpi.contractDate')}</div>
+      <div class="kpi-balloon-val">${forecastBase}</div>
+      <div class="kpi-balloon-desc">${t('kpi.baselineDesc')}</div>
+    </div>`;
+  const balloonEl = document.getElementById('kForecastBalloon');
+  if (balloonEl) balloonEl.innerHTML = balloonHtml;
+
+  // Bind hover/click once
+  const kCard = document.getElementById('kForecastCard');
+  if (kCard && !kCard._balloonBound) {
+    kCard._balloonBound = true;
+    let pinned = false;
+    kCard.addEventListener('mouseenter', () => {
+      document.getElementById('kForecastBalloon')?.classList.add('visible');
+    });
+    kCard.addEventListener('mouseleave', () => {
+      if (!pinned) document.getElementById('kForecastBalloon')?.classList.remove('visible');
+    });
+    kCard.addEventListener('click', e => {
+      e.stopPropagation();
+      pinned = !pinned;
+      const b = document.getElementById('kForecastBalloon');
+      if (b) b.classList.toggle('visible', pinned);
+    });
+    document.addEventListener('click', () => {
+      pinned = false;
+      document.getElementById('kForecastBalloon')?.classList.remove('visible');
+    });
   }
-  set('kForecast', forecast);
 }
 
 // ── Resumen ejecutivo ─────────────────────────────────────────────────────────
 function renderResumen() {
-  if (!document.getElementById('resumenText')) return;
+  if (!document.getElementById('rsMetaFecha')) return;
   const m = D.meta;
-  const dev = m.desvio;
-  const devStr = (dev >= 0 ? '+' : '') + pct(dev);
-  const status = dev < -0.02 ? `<span class="alert">${t('res.critical')}</span>`
-               : dev < 0    ? `<span class="alert">${t('res.delay')}</span>`
-               :               `<span class="ok">${t('res.onTrack')}</span>`;
+  const sc = D.scurve;
+  const currIdx = sc.findIndex(s => s.isCurrent);
+  const pctReal = currIdx >= 0 ? (sc[currIdx].real || 0) : (m.pctReal || 0);
+  const pctPlan = m.pctPlan || 0;
+  const dev = m.desvio; // already = pctReal - pctPlan
 
-  const areas = D.areas.filter(a => a.nivel === 3 && a.edt !== '4.5.1' && a.edt !== '4.5.9');
-  const areaRows = areas.map(a => {
-    const d = a.desvPond;
-    const cls = d < -0.005 ? 'alert' : d < 0 ? '' : 'ok';
-    return `<span class="${cls}">• ${a.tarea.trim()}: ${t('th.pctPlan')} ${pct(a.pctPlan)} / ${t('th.pctActual')} ${pct(a.pctReal)} / ${t('th.deviation')} ${(d >= 0 ? '+' : '') + pct(d)}</span>`;
-  }).join('<br>');
+  // Recovery figures (same as Recovery tab)
+  const targetIdx = Math.min(sc.length - 1, currIdx + _recTargetWeeks);
+  const planAtTarget = sc[targetIdx]?.plan || 0;
+  const recNeeded = Math.max(0, planAtTarget - pctReal);
+  const reqRate   = _recTargetWeeks > 0 ? recNeeded / _recTargetWeeks : 0;
+  const recentRate = _recRecentRate(sc, currIdx, 3);
+  const accelFactor = recentRate > 0 ? reqRate / recentRate : null;
+  const optRate  = reqRate * 1.2;
+  const optWeeks = optRate > 0 ? Math.ceil(recNeeded / optRate) : null;
 
-  document.getElementById('resumenText').innerHTML = `
-    <strong>${t('res.project')}:</strong> LA PAMPINA &nbsp;|&nbsp; <strong>${t('res.discipline')}:</strong> ${t('res.construction')}<br>
-    <strong>${t('res.controlDate')}:</strong> ${fmtDate(m.dataDate)} (${m.dataWeek})<br>
-    <strong>${t('res.lbPeriod')}:</strong> ${fmtDate(m.startLB)} → ${fmtDate(m.endLB)}<br>
-    <strong>${t('res.totalHH')}:</strong> ${Math.round(m.totalHH).toLocaleString()}<br>
-    <br>
-    <strong>${t('res.situation')}:</strong> ${status}<br>
-    ${t('res.realProg')}: <strong>${pct(m.pctReal)}</strong> ${t('res.vsPlanned')}: <strong>${pct(m.pctPlan)}</strong><br>
-    ${t('res.cumDev')}: <strong>${devStr}</strong><br>
-    <br>
-    <strong>${t('res.areaDetail')}:</strong><br>
-    ${areaRows}<br>
-    <br>
-    <strong>${t('res.noProgressActs')}:</strong> ${m.actSinAvance}<br>
-    <strong>Top ${t('th.deviation')}:</strong> ${D.topDesvios[0] ? D.topDesvios[0].tarea.trim() + ' (' + pct(D.topDesvios[0].desviacion) + ')' : '—'}
-  `;
+  // Header metadata
+  _rsSet('rsMetaFecha',  fmtDate(m.dataDate));
+  _rsSet('rsMetaSemana', m.dataWeek || '—');
+
+  // 6 KPI cards
+  _rsSet('rsKpiPlan',   pct(pctPlan));
+  _rsSet('rsKpiReal',   pct(pctReal));
+  _rsSet('rsKpiDesv',   (dev >= 0 ? '+' : '') + pct(dev));
+  _rsSet('rsKpiRecReq', (reqRate * 100).toFixed(3) + '%');
+  _rsSet('rsKpiAccel',  accelFactor != null ? accelFactor.toFixed(2) + 'x' : '—');
+  _rsSet('rsKpiOptim',  optWeeks != null ? optWeeks + ' sem' : '—');
+
+  // Analysis panel
+  _rsRenderAnalysis(pctPlan, pctReal, dev, planAtTarget, recNeeded, reqRate, recentRate, accelFactor);
+
+  // Top 5 desvíos
+  _rsRenderTop5();
+
+  // Palancas de recuperación
+  _rsRenderLevers();
+
+  // Mensaje ejecutivo
+  _rsRenderMessage(dev, pctReal, recNeeded, reqRate, accelFactor);
 }
 
-// ── Status Donut ──────────────────────────────────────────────────────────────
-function renderStatusDonut() {
-  const counts = { completed:0, inProgress:0, late:0, notStarted:0 };
-  D.allLeaves.forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; });
-  const total = D.allLeaves.length;
+function _rsSet(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
 
-  const statusDonutCanvas = document.getElementById('statusDonut');
-  if (!statusDonutCanvas) return;
-  destroyChart('statusDonut');
-  charts['statusDonut'] = new Chart(statusDonutCanvas, {
-    type: 'doughnut',
+function _rsRenderAnalysis(pctPlan, pctReal, dev, planAtTarget, recNeeded, reqRate, recentRate, accelFactor) {
+  const el = document.getElementById('rsAnalysisPanel');
+  if (!el) return;
+  const rows = [
+    { lbl: '% Plan acumulado',          val: pct(pctPlan) },
+    { lbl: '% Real acumulado',          val: pct(pctReal) },
+    { lbl: 'Desvío acumulado',          val: (dev >= 0?'+':'')+pct(dev),        cls: dev < 0 ? 'rs-val-neg' : 'rs-val-ok' },
+    { lbl: `Plan en sem. +${_recTargetWeeks}`, val: pct(planAtTarget) },
+    { lbl: 'Recuperación necesaria',    val: pct(recNeeded),                     highlight: true },
+    { lbl: 'Tasa req. (% / sem)',       val: (reqRate*100).toFixed(3)+'%',       highlight: true },
+    { lbl: 'Tasa reciente (3 sem)',     val: (recentRate*100).toFixed(3)+'%' },
+    { lbl: 'Factor aceleración',        val: accelFactor!=null ? accelFactor.toFixed(2)+'x' : '—',
+      cls: accelFactor != null ? (accelFactor > 2 ? 'rs-val-neg' : accelFactor > 1.2 ? 'rs-val-warn' : 'rs-val-ok') : '' },
+  ];
+  el.innerHTML = rows.map(r => `
+    <div class="rs-analysis-row${r.highlight ? ' rs-analysis-highlight' : ''}">
+      <span class="rs-analysis-lbl">${r.lbl}</span>
+      <span class="rs-analysis-val${r.highlight ? ' rs-val-primary' : r.cls ? ' '+r.cls : ''}">${r.val}</span>
+    </div>`).join('');
+}
+
+function _rsRenderTop5() {
+  const el = document.getElementById('rsTop5Panel');
+  if (!el) return;
+  const areaMap = _buildAreaMap();
+  el.innerHTML = D.topDesvios.slice(0, 5).map((r, i) => {
+    const name = r.tarea.trim();
+    const short = name.length > 40 ? name.slice(0, 40) + '…' : name;
+    const area  = _areaOfEdt(r.edt, areaMap);
+    return `
+      <div class="rs-top5-item">
+        <span class="rs-top5-rank">${i+1}</span>
+        <div class="rs-top5-info">
+          <div class="rs-top5-name" title="${name}">${short}</div>
+          <div class="rs-top5-meta">${r.edt} · ${area} · Incid: ${pct(r.incidencia,3)}</div>
+        </div>
+        <span class="rs-top5-dev">${signPct(r.desviacion)}</span>
+      </div>`;
+  }).join('');
+}
+
+function _rsRenderLevers() {
+  const el = document.getElementById('rsLeversPanel');
+  if (!el) return;
+  const levers = [...D.topDesvios]
+    .filter(r => r.desviacion < 0)
+    .sort((a, b) => Math.abs(b.desvPond || 0) - Math.abs(a.desvPond || 0))
+    .slice(0, 5);
+  const areaMap = _buildAreaMap();
+  el.innerHTML = levers.map((r, i) => {
+    const name  = r.tarea.trim();
+    const short = name.length > 38 ? name.slice(0, 38) + '…' : name;
+    const upside = pct(Math.abs(r.desvPond || 0), 3);
+    return `
+      <div class="rs-lever-item">
+        <span class="rs-lever-rank">${i+1}</span>
+        <div class="rs-lever-info">
+          <div class="rs-lever-name" title="${name}">${short}</div>
+          <div class="rs-lever-meta">${r.edt} · Potencial: <b>${upside}</b></div>
+        </div>
+        <span class="rs-lever-upside">+${upside}</span>
+      </div>`;
+  }).join('');
+}
+
+function _rsRenderMessage(dev, pctReal, recNeeded, reqRate, accelFactor) {
+  const el = document.getElementById('rsMessagePanel');
+  if (!el) return;
+  const isCrit = dev < -0.02;
+  const isLate = dev < -0.005;
+
+  const bullets = [];
+  if (isCrit) {
+    bullets.push({ type:'danger', text:`El proyecto acumula un <b>desvío crítico de ${pct(Math.abs(dev))}</b> respecto al plan.` });
+  } else if (isLate) {
+    bullets.push({ type:'warn', text:`El proyecto presenta un <b>desvío de ${pct(Math.abs(dev))}</b> respecto al plan acumulado.` });
+  } else {
+    bullets.push({ type:'ok', text:`El proyecto se encuentra <b>dentro del plan</b> con avance real de ${pct(pctReal)}.` });
+  }
+
+  if (recNeeded > 0.0001) {
+    bullets.push({ type:'warn', text:`Para alcanzar la meta en <b>${_recTargetWeeks} semanas</b>, se requiere recuperar <b>${pct(recNeeded)}</b> (${(reqRate*100).toFixed(3)}% / sem).` });
+  }
+
+  if (accelFactor != null && accelFactor > 1.05) {
+    const t2 = accelFactor > 2 ? 'danger' : 'warn';
+    bullets.push({ type:t2, text:`Se debe acelerar el ritmo de trabajo <b>${accelFactor.toFixed(1)}x</b> respecto a la tasa reciente de las últimas 3 semanas.` });
+  } else if (accelFactor != null && accelFactor <= 1.05) {
+    bullets.push({ type:'ok', text:`La tasa reciente de avance es suficiente para alcanzar la meta (factor ≈ ${accelFactor != null ? accelFactor.toFixed(2) : '—'}x).` });
+  }
+
+  const worstArea = D.areas
+    .filter(a => a.nivel === 3 && a.desvPond < -0.005)
+    .sort((a, b) => a.desvPond - b.desvPond)[0];
+  if (worstArea) {
+    bullets.push({ type:'danger', text:`Área más crítica: <b>${worstArea.tarea.trim()}</b> — desvío ponderado ${signPct(worstArea.desvPond)}.` });
+  }
+
+  el.innerHTML = bullets.map(b => `
+    <div class="rs-message-bullet">
+      <div class="rs-msg-dot rs-msg-dot-${b.type}"></div>
+      <div class="rs-message-text">${b.text}</div>
+    </div>`).join('');
+}
+
+// ── Mini S-Curve for Resumen tab (with deviation fill + recovery projection) ──
+function renderResMiniScurve() {
+  const canvas = document.getElementById('resMiniScurve');
+  if (!canvas || !D) return;
+  const sc = D.scurve;
+  const currIdx = sc.findIndex(s => s.isCurrent);
+  const pctReal = currIdx >= 0 ? (sc[currIdx].real || 0) : 0;
+
+  // Recovery projection line from current to planAtTarget
+  const targetIdx = Math.min(sc.length - 1, currIdx + _recTargetWeeks);
+  const planAtTarget = sc[targetIdx]?.plan || 0;
+  const recNeeded = Math.max(0, planAtTarget - pctReal);
+  const reqRate   = _recTargetWeeks > 0 ? recNeeded / _recTargetWeeks : 0;
+
+  const labels   = sc.map(s => s.week);
+  const planData = sc.map(s => +(s.plan * 100).toFixed(2));
+  const realData = sc.map(s => s.real != null ? +(s.real * 100).toFixed(2) : null);
+
+  // Recovery projection: null before currIdx, then project forward
+  const recovData = sc.map((_, i) => {
+    if (currIdx < 0 || i < currIdx) return null;
+    return +(Math.min(1, pctReal + reqRate * (i - currIdx)) * 100).toFixed(2);
+  });
+
+  const cutoffPlugin = {
+    id: 'rsMiniCutoff',
+    afterDraw(chart) {
+      if (currIdx < 0) return;
+      const { ctx, scales: { x, y } } = chart;
+      const xPx = x.getPixelForValue(currIdx);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(100,116,139,.55)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(xPx, y.top); ctx.lineTo(xPx, y.bottom); ctx.stroke();
+      ctx.fillStyle = 'rgba(100,116,139,.75)';
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Corte', xPx, y.top - 3);
+      ctx.restore();
+    }
+  };
+
+  destroyChart('resMiniScurve');
+  charts['resMiniScurve'] = new Chart(canvas, {
+    type: 'line',
+    plugins: [cutoffPlugin],
     data: {
-      labels: [t('status.completed'), t('status.inProgress'), t('status.late'), t('status.notStarted')],
-      datasets: [{
-        data: [counts.completed, counts.inProgress, counts.late, counts.notStarted],
-        backgroundColor: ['#00844a','#f0a500','#c00000','#a0a8c0'],
-        borderWidth: 2, borderColor: '#fff'
-      }]
+      labels,
+      datasets: [
+        { label: 'Plan',  data: planData,  borderColor:'#2563eb', borderWidth:2,
+          fill: false, pointRadius:0, tension:0.3, order:1 },
+        { label: 'Real',  data: realData,  borderColor:'#16a34a', borderWidth:2,
+          fill: { target:0, above:'transparent', below:'rgba(192,0,0,.13)' },
+          pointRadius:0, tension:0.3, order:2 },
+        { label: 'Recuperación req.', data: recovData, borderColor:'#f0a500', borderWidth:2,
+          borderDash:[5,3], fill:false, pointRadius:0, tension:0, order:3 },
+      ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'right', labels: { font:{ size:11 }, padding:8 } },
-        tooltip: { callbacks: { label: ctx =>
-          `${ctx.label}: ${ctx.parsed} (${((ctx.parsed/total)*100).toFixed(1)}%)`
-        }}
+        legend: { position:'bottom', labels:{ boxWidth:12, font:{ size:10 }, padding:8 } },
+        tooltip: { mode:'index', intersect:false },
+      },
+      scales: {
+        x: { ticks:{ maxTicksLimit:8, font:{ size:9 }, maxRotation:0 }, grid:{ display:false } },
+        y: { min:0, max:100, ticks:{ callback: v => v+'%', font:{ size:10 } } }
+      },
+    }
+  });
+}
+
+// ── Deviation-by-area donut for Resumen tab ───────────────────────────────────
+function renderRsDesvAreaDonut() {
+  const canvas = document.getElementById('rsDesvAreaDonut');
+  if (!canvas || !D) return;
+
+  const areas = D.areas
+    .filter(a => a.nivel === 3 && a.incidencia > 0.001 && a.desvPond < -0.001)
+    .sort((a, b) => a.desvPond - b.desvPond); // most negative first
+
+  destroyChart('rsDesvAreaDonut');
+
+  if (!areas.length) {
+    const tableEl = document.getElementById('rsDesvAreaTable');
+    if (tableEl) tableEl.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0">Sin desvíos negativos por área.</div>';
+    return;
+  }
+
+  const labels = areas.map(a => { const n = a.tarea.trim(); return n.length > 22 ? n.slice(0,22)+'…' : n; });
+  const values = areas.map(a => +Math.abs(a.desvPond * 100).toFixed(3));
+  const palette = ['#c00000','#e05555','#f87171','#fca5a5','#fecaca'];
+
+  charts['rsDesvAreaDonut'] = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data: values, backgroundColor: palette.slice(0, areas.length), borderWidth:2, borderColor:'#fff' }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '60%',
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `${ctx.label}: ${ctx.parsed.toFixed(3)}%` } }
       }
     }
   });
-}
 
-// ── Weekly Bar ────────────────────────────────────────────────────────────────
-function renderWeeklyBar() {
-  const sc = D.scurve;
-  const currIdx = sc.findIndex(s => s.isCurrent);
-  const slice = sc.slice(Math.max(0, currIdx - 9), currIdx + 1);
-
-  const weeklyBarCanvas = document.getElementById('weeklyBar');
-  if (!weeklyBarCanvas) return;
-  destroyChart('weeklyBar');
-  charts['weeklyBar'] = new Chart(weeklyBarCanvas, {
-    type: 'bar',
-    data: {
-      labels: slice.map(s => s.week),
-      datasets: [
-        { label: t('sc.plan'), data: slice.map(s => +(s.plan*100).toFixed(2)), backgroundColor:'rgba(0,84,166,0.7)', borderRadius:3 },
-        { label: t('sc.actual'), data: slice.map(s => s.real != null ? +(s.real*100).toFixed(2) : null), backgroundColor:'rgba(0,163,108,0.7)', borderRadius:3 },
-      ]
-    },
-    options: {
-      responsive:true, maintainAspectRatio:false,
-      plugins: { legend:{ position:'top', labels:{ font:{size:11} } } },
-      scales: { y: { ticks:{ callback: v => v+'%', font:{size:10} } } }
-    }
-  });
-}
-
-// ── Top 5 ─────────────────────────────────────────────────────────────────────
-function renderTop5() {
-  const top5El = document.getElementById('top5List');
-  if (!top5El) return;
-  top5El.innerHTML = D.topDesvios.slice(0, 5).map((r, i) => `
-    <div class="top5-item">
-      <span class="top5-rank">${i+1}</span>
-      <div class="top5-info">
-        <div class="top5-name">${r.tarea.trim().length > 44 ? r.tarea.trim().slice(0,44)+'…' : r.tarea.trim()}</div>
-        <div class="top5-meta">${r.edt} · ${t('res.incid')} ${pct(r.incidencia,3)}</div>
-      </div>
-      <span class="top5-dev dev-neg">${signPct(r.desviacion)}</span>
-    </div>
-  `).join('');
+  const tableEl = document.getElementById('rsDesvAreaTable');
+  if (tableEl) {
+    tableEl.innerHTML = areas.map(a => {
+      const name  = a.tarea.trim();
+      const short = name.length > 26 ? name.slice(0, 26) + '…' : name;
+      return `<div class="rs-desv-row">
+        <span class="rs-desv-name" title="${name}">${short}</span>
+        <span class="rs-desv-val rs-desv-neg">${signPct(a.desvPond)}</span>
+      </div>`;
+    }).join('');
+  }
 }
 
 // ── Area bar chart ────────────────────────────────────────────────────────────
@@ -984,14 +1577,14 @@ function renderAreasBar() {
     data: {
       labels: rows.map(a => a.tarea.trim().slice(0,35)),
       datasets: [
-        { label: t('ar.plan'), data: rows.map(a => +(a.pctPlan*100).toFixed(2)), backgroundColor:'rgba(0,84,166,0.7)', borderRadius:3 },
-        { label: t('ar.actual'), data: rows.map(a => +(a.pctReal*100).toFixed(2)), backgroundColor:'rgba(0,163,108,0.7)', borderRadius:3 },
+        { label: t('th.pctPlan'),   data: rows.map(a => +(a.pctCompPlan*100).toFixed(2)), backgroundColor:'rgba(0,84,166,0.7)',  borderRadius:3 },
+        { label: t('th.pctActual'), data: rows.map(a => +(a.pctCompReal*100).toFixed(2)), backgroundColor:'rgba(0,163,108,0.7)', borderRadius:3 },
       ]
     },
     options: {
       indexAxis:'y', responsive:true, maintainAspectRatio:false,
       plugins: { legend:{ position:'top' } },
-      scales: { x:{ ticks:{ callback: v => v+'%' } } }
+      scales: { x:{ min:0, max:100, ticks:{ callback: v => v+'%' } } }
     }
   });
 }
@@ -1066,26 +1659,51 @@ function renderDesviosTable(rows) {
 }
 
 // ── Críticas Bar + Table ──────────────────────────────────────────────────────
+/** Build a level-3 EDT → name lookup from D.areas */
+function _buildAreaMap() {
+  const map = {};
+  (D?.areas || []).filter(a => a.nivel === 3).forEach(a => { map[a.edt] = a.tarea.trim(); });
+  return map;
+}
+/** Return the nivel-3 parent name for an activity EDT (e.g. "4.5.4.1.1" → "4.5.4" name) */
+function _areaOfEdt(edt, areaMap) {
+  const key = edt.split('.').slice(0, 3).join('.');
+  return areaMap[key] || key;
+}
+
 function renderCriticasBar(rows) {
   const criticasBarCanvas = document.getElementById('criticasBarChart');
   if (!criticasBarCanvas) return;
-  const top = rows.slice(0,15);
+  const top     = rows.slice(0, 15);
+  const areaMap = _buildAreaMap();
+  const truncName = r => {
+    const name = r.tarea.trim();
+    return name.length > 40 ? name.slice(0, 38) + '…' : name;
+  };
   destroyChart('criticasBarChart');
   charts['criticasBarChart'] = new Chart(criticasBarCanvas, {
     type:'bar',
     data: {
-      labels: top.map(r => r.edt),
+      labels: top.map(truncName),
       datasets:[
-        { label: t('cr.plan'), data: top.map(r => +(r.pctCompPlan*100).toFixed(1)), backgroundColor:'rgba(0,84,166,0.6)', borderRadius:3 },
+        { label: t('cr.plan'),   data: top.map(r => +(r.pctCompPlan*100).toFixed(1)), backgroundColor:'rgba(0,84,166,0.6)',  borderRadius:3 },
         { label: t('cr.actual'), data: top.map(r => +(r.pctCompReal*100).toFixed(1)), backgroundColor:'rgba(192,0,0,0.65)', borderRadius:3 },
       ]
     },
     options: {
       indexAxis:'y', responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{position:'top'},
-        tooltip:{ callbacks:{ afterTitle: items => top[items[0].dataIndex]?.tarea.trim().slice(0,55) }}
+      plugins:{ legend:{ position:'top' },
+        tooltip:{ callbacks:{
+          afterTitle: items => {
+            const r = top[items[0].dataIndex];
+            return r ? `${r.edt}  ·  ${_areaOfEdt(r.edt, areaMap)}` : '';
+          }
+        }}
       },
-      scales:{ x:{ ticks:{ callback: v => v+'%' }, max:100 } }
+      scales:{
+        x:{ ticks:{ callback: v => v+'%' }, max:100 },
+        y:{ ticks:{ font:{ size:11 } } }
+      }
     }
   });
 }
@@ -1093,11 +1711,15 @@ function renderCriticasBar(rows) {
 function renderCriticasTable(rows) {
   const criticasTableEl = document.getElementById('criticasTable');
   if (!criticasTableEl) return;
+  const areaMap = _buildAreaMap();
   criticasTableEl.innerHTML = tableWrap(
-    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.start')}</th><th>${t('th.end')}</th>
+    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th>
+     <th class="left">${t('th.area')}</th>
+     <th>${t('th.start')}</th><th>${t('th.end')}</th>
      <th>${t('th.hh')}</th><th>${t('th.incidence')}</th><th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>${t('th.deviation')}</th><th>${t('th.impactPond')}</th></tr>`,
     rows.map((r,i) => `<tr>
       <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
+      <td class="left" style="font-size:11px;color:var(--text-muted)">${_areaOfEdt(r.edt, areaMap)}</td>
       <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
       <td>${Math.round(r.hh).toLocaleString()}</td><td>${pct(r.incidencia,4)}</td>
       <td>${pct(r.pctCompPlan)}</td><td>${pct(r.pctCompReal)}</td>
@@ -1300,6 +1922,7 @@ function buildConsolidated() {
         zonePrefix: zone.prefix,
         zoneLabel,
         discSeg,
+        pbIdx:      zone.pbIdx,  // index of PB segment in EDT parts
         minEdt:     leaf.edt,
         leaves:     [],
         pbSet:      new Set(),   // todos los PB con esta actividad
@@ -1340,6 +1963,8 @@ function buildConsolidated() {
       zonePrefix: g.zonePrefix,
       zoneLabel:  g.zoneLabel,
       discSeg:    g.discSeg,
+      pbIdx:      g.pbIdx,
+      leaves:     g.leaves.slice().sort((a, b) => edtCmp(a.edt, b.edt)),
       // Nombre consolidado: prefijo común de todos los nombres (sin "PBxx")
       tarea:      namePrefix(g.leaves.map(l => l.tarea.trim())),
       count:      g.leaves.length,
@@ -1419,44 +2044,91 @@ function renderConsolidadoTable(rows) {
     return;
   }
 
-  el.innerHTML = tableWrap(
-    `<tr>
-      <th class="left" style="min-width:220px">Actividad</th>
-      <th class="left" style="min-width:150px">Zona / Disciplina</th>
-      <th title="Total de Power Blocks que tienen esta actividad">PB total</th>
-      <th title="PB donde el avance planificado al corte es &gt; 0">PB planif.</th>
-      <th title="PB donde el avance real es &gt; 0">PB c/avance</th>
-      <th title="PB donde el avance real es menor al planificado">PB c/desvío</th>
-      <th title="Suma de incidencias de todos los PB del grupo">Peso total</th>
-      <th title="Σ incidencia × plan — peso del avance planificado">Peso plan.</th>
-      <th title="Σ incidencia × real — peso del avance real">Peso real</th>
-      <th title="Promedio ponderado del avance planificado">Plan consol.</th>
-      <th title="Promedio ponderado del avance real">Real consol.</th>
-      <th title="Real consolidado − Plan consolidado">Gap</th>
-    </tr>`,
-    rows.map(g => {
-      const gapCls = devClass(g.gap);
-      const slug   = g.zonePrefix.replace(/\./g, '-');
-      // Barra de progreso PB: avance / total
-      const pctAv  = g.pbTotal > 0 ? (g.pbAv / g.pbTotal * 100).toFixed(0) : 0;
-      const miniBar = `<div class="pb-mini" title="${g.pbAv}/${g.pbTotal} PB con avance real">
-        <div class="pb-mini-fill" style="width:${pctAv}%"></div></div>`;
-      return `<tr>
-        <td class="left"><span class="cons-tarea">${g.tarea}</span></td>
-        <td class="left"><span class="zone-tag zone-${slug}">${g.zoneLabel}</span></td>
-        <td class="cons-pb-num"><strong>${g.pbTotal}</strong></td>
-        <td>${g.pbPlan}</td>
-        <td>${g.pbAv}${miniBar}</td>
-        <td class="${g.pbDev > 0 ? 'dev-neg' : 'dev-neutral'}">${g.pbDev > 0 ? g.pbDev : '—'}</td>
-        <td>${pct(g.incTotal, 3)}</td>
-        <td>${pct(g.pesoPlan, 3)}</td>
-        <td>${pct(g.pesoReal, 3)}</td>
-        <td>${pct(g.planConsol)}</td>
-        <td>${pct(g.realConsol)}</td>
-        <td class="${gapCls}"><strong>${signPct(g.gap)}</strong></td>
+  const thead = `<tr>
+    <th class="left" style="min-width:240px">Actividad</th>
+    <th class="left" style="min-width:150px">Zona / Disciplina</th>
+    <th title="Total de Power Blocks que tienen esta actividad">PB total</th>
+    <th title="PB donde el avance planificado al corte es &gt; 0">PB planif.</th>
+    <th title="PB donde el avance real es &gt; 0">PB c/avance</th>
+    <th title="PB donde el avance real es menor al planificado">PB c/desvío</th>
+    <th title="Suma de incidencias de todos los PB del grupo">Peso total</th>
+    <th title="Σ incidencia × plan — peso del avance planificado">Peso plan.</th>
+    <th title="Σ incidencia × real — peso del avance real">Peso real</th>
+    <th title="Promedio ponderado del avance planificado">Plan consol.</th>
+    <th title="Promedio ponderado del avance real">Real consol.</th>
+    <th title="Real consolidado − Plan consolidado">Gap</th>
+  </tr>`;
+
+  let tbody = '';
+  rows.forEach((g, idx) => {
+    const gapCls = devClass(g.gap);
+    const slug   = g.zonePrefix.replace(/\./g, '-');
+    const pctAv  = g.pbTotal > 0 ? (g.pbAv / g.pbTotal * 100).toFixed(0) : 0;
+    const miniBar = `<div class="pb-mini" title="${g.pbAv}/${g.pbTotal} PB con avance real">
+      <div class="pb-mini-fill" style="width:${pctAv}%"></div></div>`;
+
+    // ── Group (summary) row ───────────────────────────────────────────────
+    tbody += `<tr class="cons-group-row">
+      <td class="left">
+        <button class="cons-expand-btn" data-cidx="${idx}" title="Ver PB individuales">▶</button>
+        <span class="cons-tarea">${g.tarea}</span>
+      </td>
+      <td class="left"><span class="zone-tag zone-${slug}">${g.zoneLabel}</span></td>
+      <td class="cons-pb-num"><strong>${g.pbTotal}</strong></td>
+      <td>${g.pbPlan}</td>
+      <td>${g.pbAv}${miniBar}</td>
+      <td class="${g.pbDev > 0 ? 'dev-neg' : 'dev-neutral'}">${g.pbDev > 0 ? g.pbDev : '—'}</td>
+      <td>${pct(g.incTotal, 3)}</td>
+      <td>${pct(g.pesoPlan, 3)}</td>
+      <td>${pct(g.pesoReal, 3)}</td>
+      <td>${pct(g.planConsol)}</td>
+      <td>${pct(g.realConsol)}</td>
+      <td class="${gapCls}"><strong>${signPct(g.gap)}</strong></td>
+    </tr>`;
+
+    // ── Detail rows (one per PB leaf, hidden by default) ─────────────────
+    (g.leaves || []).forEach(leaf => {
+      const pbNum    = g.pbIdx != null ? (leaf.edt.split('.')[g.pbIdx] || '?') : '?';
+      const leafGap  = leaf.pctCompReal - leaf.pctCompPlan;
+      const leafCls  = devClass(leafGap);
+      const planW    = (leaf.pctCompPlan  * 100).toFixed(1);
+      const realW    = (leaf.pctCompReal  * 100).toFixed(1);
+      const realClr  = leafGap < -0.001 ? 'var(--danger)' : 'var(--success)';
+      const bars     = `<div class="cons-leaf-bars">
+        <div class="cons-leaf-bar" style="width:${planW}%;background:var(--primary)" title="Plan ${planW}%"></div>
+        <div class="cons-leaf-bar" style="width:${realW}%;background:${realClr}" title="Real ${realW}%"></div>
+      </div>`;
+      tbody += `<tr class="cons-detail-row" data-cparent="${idx}">
+        <td class="left cons-detail-cell">
+          <span class="cons-pb-tag">PB ${pbNum}</span>
+          <span class="cons-edt-lbl">${leaf.edt}</span>
+        </td>
+        <td></td>
+        <td>—</td><td>—</td><td>—</td><td>—</td>
+        <td>${pct(leaf.incidencia, 3)}</td>
+        <td>${pct(leaf.incidencia * leaf.pctCompPlan, 3)}</td>
+        <td>${pct(leaf.incidencia * leaf.pctCompReal, 3)}</td>
+        <td>${bars} <span style="font-size:10px">${planW}%</span></td>
+        <td>${realW}%</td>
+        <td class="${leafCls}"><strong>${signPct(leafGap)}</strong></td>
       </tr>`;
-    }).join('')
-  );
+    });
+  });
+
+  el.innerHTML = `<div class="grid-wrap"><table><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+
+  // ── Event delegation: expand / collapse ───────────────────────────────
+  const table = el.querySelector('table');
+  if (table) {
+    table.addEventListener('click', e => {
+      const btn = e.target.closest('.cons-expand-btn');
+      if (!btn) return;
+      const cidx  = btn.dataset.cidx;
+      const isOpen = btn.classList.toggle('open');
+      el.querySelectorAll(`.cons-detail-row[data-cparent="${cidx}"]`)
+        .forEach(r => r.classList.toggle('cons-detail-visible', isOpen));
+    });
+  }
 }
 
 function setupConsolidado() {
@@ -1879,34 +2551,6 @@ function renderFuture() {
   );
 }
 
-// ── Tabla ─────────────────────────────────────────────────────────────────────
-let tablaRows = [];
-function renderTabla(filtered) {
-  const tablaWrapEl = document.getElementById('tablaWrap');
-  if (!tablaWrapEl) return;
-  tablaRows = filtered || D.allLeaves;
-
-  const areaBox = document.getElementById('areaBox');
-  if (areaBox && areaBox.options.length === 1) {
-    [...new Set(D.allLeaves.map(r => r.edt.split('.').slice(0,2).join('.')))].sort()
-      .forEach(g => areaBox.appendChild(new Option(g, g)));
-  }
-
-  tablaWrapEl.innerHTML = tableWrap(
-    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.duration')}</th>
-     <th>${t('th.start')}</th><th>${t('th.end')}</th><th>${t('th.hh')}</th><th>${t('th.incidence')}</th>
-     <th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>${t('th.deviation')}</th><th>${t('th.status')}</th></tr>`,
-    tablaRows.map((r,i) => `<tr>
-      <td>${i+1}</td><td class="left">${r.tarea.trim()}</td>
-      <td>${r.edt}</td><td>${r.duracion}</td>
-      <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
-      <td>${Math.round(r.hh).toLocaleString()}</td><td>${pct(r.incidencia,4)}</td>
-      <td>${pct(r.pctCompPlan)}</td><td>${pct(r.pctCompReal)}</td>
-      <td class="${devClass(r.desviacion)}">${signPct(r.desviacion)}</td>
-      <td>${statusBadge(r)}</td>
-    </tr>`).join('')
-  );
-}
 
 // ── Populate area dropdowns ───────────────────────────────────────────────────
 function populateAreaDropdowns() {
@@ -1979,39 +2623,6 @@ function setupTabFilters() {
   on('rankClasif',  'change', updateRank);
 }
 
-// ── Table filters (Tabla tab) ─────────────────────────────────────────────────
-function setupTableFilters() {
-  on('searchBox', 'input',  applyFilters);
-  on('statusBox', 'change', applyFilters);
-  on('areaBox',   'change', applyFilters);
-  on('exportBtn', 'click',  exportCsv);
-}
-
-function applyFilters() {
-  if (!D) return;
-  const q      = document.getElementById('searchBox').value.toLowerCase();
-  const status = document.getElementById('statusBox').value;
-  const area   = document.getElementById('areaBox').value;
-  renderTabla(D.allLeaves.filter(r =>
-    (!q      || r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)) &&
-    (!status || r.status === status) &&
-    (!area   || r.edt.startsWith(area))
-  ));
-}
-
-function exportCsv() {
-  const hdr = [t('th.edt'),t('th.activity'),t('th.duration'),t('th.start'),t('th.end'),t('th.hh'),t('th.incidence'),t('th.pctPlan'),t('th.pctActual'),t('th.deviation'),t('th.status')];
-  const lines = [hdr.join(','), ...tablaRows.map(r =>
-    [r.edt, `"${r.tarea.trim()}"`, r.duracion, r.inicio, r.fin,
-     r.hh.toFixed(0), r.incidencia.toFixed(6),
-     (r.pctCompPlan*100).toFixed(2), (r.pctCompReal*100).toFixed(2),
-     (r.desviacion*100).toFixed(2), r.status].join(',')
-  )];
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'}));
-  a.download = 'actividades_construccion.csv';
-  a.click();
-}
 
 // ── Simulador Tab ─────────────────────────────────────────────────────────────
 
