@@ -314,17 +314,38 @@ function setupRecovery() {
   if (sel) {
     sel.addEventListener('change', () => {
       _recTargetWeeks = parseInt(sel.value, 10) || 7;
+      // Keep modal select in sync
+      const modalSel = document.getElementById('recTargetWeeksModal');
+      if (modalSel) modalSel.value = sel.value;
       if (D) _tryRender(renderRecovery);
     });
   }
+
+  // Modal target-weeks select — mirrors main select and re-renders modal chart
+  const selModal = document.getElementById('recTargetWeeksModal');
+  if (selModal) {
+    selModal.addEventListener('change', () => {
+      _recTargetWeeks = parseInt(selModal.value, 10) || 7;
+      // Keep main select in sync
+      if (sel) sel.value = selModal.value;
+      if (D) {
+        _tryRender(renderRecovery);   // updates recTargetDate + all panels
+        // After renderRecovery updates recTargetDate, sync to modal label
+        requestAnimationFrame(_syncModalDate);
+        // Re-render modal chart with new target
+        requestAnimationFrame(() => renderRecScurve('recScurveModalChart'));
+      }
+    });
+  }
+
   const selR = document.getElementById('recRateWeeks');
   if (selR) {
     selR.addEventListener('change', () => {
       _recRateWeeks = parseInt(selR.value, 10) || 3;
       if (D) {
         _tryRender(renderRecovery);
-        _tryRender(renderResumen);       // Resumen KPIs and analysis panel also use _recRateWeeks
-        _tryRender(renderResMiniScurve); // Resumen S-curve recovery line uses the same rate
+        _tryRender(renderResumen);
+        _tryRender(renderResMiniScurve);
       }
     });
   }
@@ -603,7 +624,7 @@ function _renderRecDesvDonut() {
     const rows = areas.map((a, i) => {
       const pct = totalDesvPond > 0 ? (Math.abs(a.desvPond) / totalDesvPond * 100).toFixed(1) : '—';
       return `<tr>
-        <td><span style="display:inline-block;width:10px;height:10px;border-radius:2px;
+        <td style="text-align:left"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;
           background:${COLORS[i % COLORS.length]};margin-right:5px;vertical-align:middle"></span>
           ${a.tarea.trim().slice(0,24)}</td>
         <td style="text-align:right;color:var(--danger);font-weight:600">${(a.desvPond * 100).toFixed(2)}</td>
@@ -645,8 +666,8 @@ function _renderRecTopActivities(devTotalPP) {
     const lbl     = imp > 0.005 ? 'Crítico' : imp > 0.002 ? 'Alto' : 'Medio';
     return `<tr>
       <td style="font-weight:700;color:var(--text-muted)">${i+1}</td>
-      <td style="font-weight:600">${r.tarea.trim()}</td>
-      <td style="font-size:10px;color:var(--primary)">${area}</td>
+      <td style="font-weight:600;text-align:left">${r.tarea.trim()}</td>
+      <td style="font-size:10px;color:var(--primary);text-align:left">${area}</td>
       <td style="color:var(--danger);font-weight:700;text-align:right">${desvPP}</td>
       <td style="text-align:right">${pctDev}%</td>
       <td><div class="rec-act-bar-wrap"><div class="rec-act-bar" style="width:${barW}%"></div></div></td>
@@ -699,8 +720,8 @@ function _renderRecLevers(reqRate, recNeeded) {
     const dotsHtml = '●'.repeat(ease) + '<span style="opacity:.25">' + '●'.repeat(5 - ease) + '</span>';
     return `<tr>
       <td style="font-weight:700;color:var(--text-muted)">${i+1}</td>
-      <td style="font-weight:600">${r.tarea.trim()}</td>
-      <td style="font-size:10px;color:var(--primary)">${area}</td>
+      <td style="font-weight:600;text-align:left">${r.tarea.trim()}</td>
+      <td style="font-size:10px;color:var(--primary);text-align:left">${area}</td>
       <td style="text-align:right;color:var(--success);font-weight:700">+${recPot}</td>
       <td style="text-align:right">${pctImp}%</td>
       <td class="rec-lev-dots">${dotsHtml}</td>
@@ -763,9 +784,13 @@ function _renderRecMessage(dev, pctReal, recNeeded, reqRate, accelFactor) {
   ).join('') + '</ul>';
 }
 
-/** S-curve: reference design — plan / real / deviation fill / recovery line + annotations */
-function renderRecScurve() {
-  const canvas = document.getElementById('recScurveChart');
+/** S-curve: reference design — plan / real / deviation fill / recovery line + annotations
+ *  @param {string} [canvasId='recScurveChart'] — target canvas id (pass modal id to render there)
+ */
+function renderRecScurve(canvasId) {
+  canvasId = canvasId || 'recScurveChart';
+  const isModal = canvasId !== 'recScurveChart';
+  const canvas = document.getElementById(canvasId);
   if (!canvas || !D) return;
 
   const sc = D.scurve;
@@ -782,33 +807,36 @@ function renderRecScurve() {
   const reqRate    = _recTargetWeeks > 0 ? recNeeded / _recTargetWeeks : 0;
   const targetWeekLabel = sc[targetIdx]?.week || '';
 
-  // Data arrays
-  const weekLabels = sc.map(s => s.week);
-  const planData   = sc.map(s => +(s.plan * 100).toFixed(2));
-  const realData   = sc.map(s => s.real != null ? +(s.real * 100).toFixed(2) : null);
+  // ── Clipped view: HIST_CTX weeks of history + full recovery window ──────────
+  // This gives each week proper horizontal space in the chart.
+  const HIST_CTX = 8;                                      // weeks of context before cutoff
+  const viewStart = Math.max(0, currIdx - HIST_CTX);
+  const viewEnd   = targetIdx;
+  const scView    = sc.slice(viewStart, viewEnd + 1);
+  // Re-map indices into the clipped array
+  const ci = currIdx - viewStart;   // cutoff index within scView
+  const ti = targetIdx - viewStart; // target index within scView
 
-  // Recovery line: same curvature as the Plan line in the currIdx→targetIdx segment,
-  // rescaled in Y so it starts at pctReal and ends exactly at planAtTgt.
-  // Mapping: t = (plan[i] - planAtCurr) / (planAtTgt - planAtCurr)  → [0..1] along plan shape
-  //          recov[i] = pctReal + t * (planAtTgt - pctReal)
+  const weekLabels = scView.map(s => s.week);
+  const planData   = scView.map(s => +(s.plan * 100).toFixed(2));
+
+  // Real line: only up to cutoff
+  const realData = scView.map((s, i) =>
+    (i <= ci && s.real != null) ? +(s.real * 100).toFixed(2) : null);
+
+  // Recovery line: cutoff → target
   const planRange = planAtTgt - planAtCurr;
-  const recovData = sc.map((s, i) => {
-    if (i < currIdx || i > targetIdx) return null;
-    const t = planRange !== 0 ? (s.plan - planAtCurr) / planRange : (i - currIdx) / _recTargetWeeks;
+  const recovData = scView.map((s, i) => {
+    if (i < ci || i > ti) return null;
+    const t = planRange !== 0 ? (s.plan - planAtCurr) / planRange : (i - ci) / _recTargetWeeks;
     const v = pctReal + t * (planAtTgt - pctReal);
     return +(Math.min(1, Math.max(0, v)) * 100).toFixed(2);
   });
 
-  // X-axis: show "ene/25" style labels only at month transitions
-  const MONTHS_ES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-  const monthTickLabels = sc.map((s, i) => {
-    if (!s.date) return null;
-    const d = new Date(s.date + 'T12:00:00');
-    if (i === 0) return MONTHS_ES[d.getMonth()] + '/' + String(d.getFullYear()).slice(2);
-    const prev = sc[i - 1]?.date ? new Date(sc[i - 1].date + 'T12:00:00') : null;
-    if (!prev || d.getMonth() !== prev.getMonth())
-      return MONTHS_ES[d.getMonth()] + '/' + String(d.getFullYear()).slice(2);
-    return null;
+  // X-axis: every week labeled — history every 2 weeks, recovery every week
+  const xTickLabels = scView.map((s, i) => {
+    if (i >= ci) return s.week;                // all recovery weeks (ci to ti)
+    return (i % 2 === 0) ? s.week : null;      // history every 2 weeks
   });
 
   // Update chart card title dynamically
@@ -820,8 +848,8 @@ function renderRecScurve() {
     id: 'recAnnotations',
     afterDraw(chart) {
       const { ctx, scales: { x, y }, chartArea } = chart;
-      const currX    = x.getPixelForValue(currIdx);
-      const tgtX     = x.getPixelForValue(targetIdx);
+      const currX    = x.getPixelForValue(ci);
+      const tgtX     = x.getPixelForValue(ti);
       const currRealY = y.getPixelForValue(pctReal * 100);
       const currPlanY = y.getPixelForValue(planAtCurr * 100);
       const tgtY     = y.getPixelForValue(planAtTgt * 100);
@@ -844,7 +872,7 @@ function renderRecScurve() {
       const fcW = ctx.measureText(fcText).width + 18;
       const fcH = 22;
       const fcX = currX - fcW / 2;
-      const fcY = chartArea.bottom + 6;
+      const fcY = chartArea.bottom - fcH - 4;  // inside chart area, just above x-axis
       ctx.fillStyle = '#1e293b';
       _rrect(ctx, fcX, fcY, fcW, fcH, 5);
       ctx.fill();
@@ -896,8 +924,9 @@ function renderRecScurve() {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // 5. Callout box at endpoint — only when hovering near the target dot
-      if (_recCalloutVisible) {
+      // 5. Callout box at endpoint — always visible in modal; hover-controlled in main chart
+      const showCallout = isModal || _recCalloutVisible;
+      if (showCallout) {
         const boxLines = [
           'Recuperación estimada',
           `en ${_recTargetWeeks} semanas`,
@@ -934,8 +963,8 @@ function renderRecScurve() {
     }
   };
 
-  destroyChart('recScurveChart');
-  charts['recScurveChart'] = new Chart(canvas, {
+  destroyChart(canvasId);
+  charts[canvasId] = new Chart(canvas, {
     type: 'line',
     plugins: [annotPlugin],
     data: {
@@ -961,19 +990,26 @@ function renderRecScurve() {
           pointRadius: 0, tension: 0.3, spanGaps: false,
           fill: { target: 0, above: 'transparent', below: 'rgba(220,38,38,.13)' },
           order: 5 },
-        // 4 — Endpoint marker (blue dot exactly where recovery meets plan)
+        // 4 — Crossing dot: blue filled circle on Plan line where Recovery meets it
         { label: null,
-          data: sc.map((_, i) => i === targetIdx ? +(planAtTgt * 100).toFixed(2) : null),
+          data: scView.map((_, i) => i === ti ? +(planAtTgt * 100).toFixed(2) : null),
           borderColor: '#2563eb', backgroundColor: '#2563eb',
-          pointRadius: sc.map((_, i) => i === targetIdx ? 6 : 0),
-          pointHoverRadius: 8, borderWidth: 0, fill: false, tension: 0,
+          pointRadius: scView.map((_, i) => i === ti ? 7 : 0),
+          pointHoverRadius: 9, borderWidth: 2, fill: false, tension: 0,
+          showLine: false, spanGaps: false, order: 0 },
+        // 5 — Current-week dot: green filled circle on Real line at fecha de corte
+        { label: null,
+          data: scView.map((_, i) => i === ci ? +(pctReal * 100).toFixed(2) : null),
+          borderColor: '#166534', backgroundColor: '#166534',
+          pointRadius: scView.map((_, i) => i === ci ? 5 : 0),
+          pointHoverRadius: 7, borderWidth: 2, fill: false, tension: 0,
           showLine: false, spanGaps: false, order: 0 },
       ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: 6, bottom: 30 } },  // bottom padding for "Fecha de corte" pill
+      layout: { padding: { top: 6, bottom: 4 } },
       plugins: {
         legend: {
           display: true, position: 'top',
@@ -1013,14 +1049,16 @@ function renderRecScurve() {
       },
       scales: {
         y: {
-          min: 0, max: 100,
+          min: 0,
+          // Scale Y to the plan value at the target week + 20% headroom, rounded to next 5%
+          max: Math.ceil(planAtTgt * 100 * 1.20 / 5) * 5,
           ticks: { callback: v => v + '%', font: { size: 11 } },
           grid: { color: 'rgba(0,0,0,.06)' }
         },
         x: {
           ticks: {
-            callback: (_, i) => monthTickLabels[i] ?? null,
-            maxRotation: 0, font: { size: 10 },
+            callback: (_, i) => xTickLabels[i] ?? null,
+            maxRotation: 90, minRotation: 45, font: { size: 9 },
             autoSkip: false,
           },
           grid: { display: false }
@@ -1030,17 +1068,16 @@ function renderRecScurve() {
     },
   });
 
-  // Hover listeners: show callout only when mouse is near the endpoint dot
-  const ch = charts['recScurveChart'];
-  if (ch) {
-    // Remove any previous listeners stored on the canvas element
+  // Hover listeners: only for the main chart (modal always shows callout)
+  const ch = charts[canvasId];
+  if (ch && !isModal) {
     if (canvas._recHoverFn)   canvas.removeEventListener('mousemove',  canvas._recHoverFn);
     if (canvas._recLeaveFn)   canvas.removeEventListener('mouseleave', canvas._recLeaveFn);
 
     canvas._recHoverFn = (e) => {
       const rect    = canvas.getBoundingClientRect();
       const mx      = e.clientX - rect.left;
-      const tgtPx   = ch.scales.x?.getPixelForValue(targetIdx);
+      const tgtPx   = ch.scales.x?.getPixelForValue(ti);
       const was     = _recCalloutVisible;
       _recCalloutVisible = tgtPx != null && Math.abs(mx - tgtPx) < 40;
       if (_recCalloutVisible !== was) ch.draw();
@@ -1052,6 +1089,42 @@ function renderRecScurve() {
     canvas.addEventListener('mouseleave', canvas._recLeaveFn);
   }
 }
+
+// ── S-curve expand modal ─────────────────────────────────────────────────────
+function openScurveModal() {
+  const modal = document.getElementById('scurveModal');
+  if (!modal) return;
+
+  // Sync filter values from main controls → modal controls
+  const mainSel  = document.getElementById('recTargetWeeks');
+  const modalSel = document.getElementById('recTargetWeeksModal');
+  if (mainSel && modalSel) modalSel.value = mainSel.value;
+
+  // Sync target date label
+  _syncModalDate();
+
+  modal.classList.add('open');
+  // Two rAF so the modal canvas has correct dimensions before rendering
+  requestAnimationFrame(() => requestAnimationFrame(() => renderRecScurve('recScurveModalChart')));
+}
+
+function closeScurveModal() {
+  const modal = document.getElementById('scurveModal');
+  if (!modal) return;
+  modal.classList.remove('open');
+  destroyChart('recScurveModalChart');
+}
+
+function _syncModalDate() {
+  const src = document.getElementById('recTargetDate');
+  const dst = document.getElementById('recTargetDateModal');
+  if (src && dst) dst.textContent = src.textContent;
+}
+
+// ESC closes the modal
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeScurveModal();
+});
 
 /** Draw a rounded rectangle path (helper used by renderRecScurve annotations) */
 function _rrect(ctx, x, y, w, h, r) {

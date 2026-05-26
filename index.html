@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=4.0">
+  <link rel="stylesheet" href="styles.css?v=4.9">
   <script src="i18n.js?v=1.7"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -114,7 +114,7 @@
         <!-- ── Header ejecutivo ── -->
         <div class="rs-header">
           <div class="rs-header-left">
-            <div class="rs-logo">⚡</div>
+            <div class="rs-logo" style="display:none"></div>
             <div>
               <div class="rs-project">LA PAMPINA CONSTRUCCIÓN</div>
               <div class="rs-subtitle">RESUMEN EJECUTIVO</div>
@@ -127,7 +127,7 @@
             </div>
             <div class="rs-meta-item">
               <span class="rs-meta-lbl">PROYECTO</span>
-              <span class="rs-meta-val">LA PAMPINA SOLAR+BESS</span>
+              <span class="rs-meta-val">LA PAMPINA</span>
             </div>
             <div class="rs-meta-item">
               <span class="rs-meta-lbl">SEMANA</span>
@@ -214,7 +214,7 @@
         <!-- ── Row 4: Palancas | Mensaje ── -->
         <div class="rs-row3">
           <div class="chart-card">
-            <div class="rs-card-hdr">PALANCAS DE RECUPERACIÓN</div>
+            <div class="rs-card-hdr">ACTIVIDADES DE RECUPERACIÓN</div>
             <div id="rsLeversPanel" class="rs-levers-panel"></div>
           </div>
           <div class="chart-card rs-msg-card">
@@ -225,7 +225,7 @@
 
         <!-- ── Footer ── -->
         <div class="rs-footer-note">
-          Generado automáticamente · PowerChina Chile · La Pampina Solar+BESS
+          Generado automáticamente · PowerChina Chile · La Pampina
         </div>
 
       </div> <!-- /resumenContent -->
@@ -761,14 +761,6 @@
         <span class="rec-ctrl-sep">|</span>
         <span class="rec-ctrl-lbl" data-i18n="rec.targetWeekLbl">Semana objetivo:</span>
         <span id="recTargetDate" class="rec-meta-date">—</span>
-        <span class="rec-ctrl-sep">|</span>
-        <span class="rec-ctrl-lbl" data-i18n="rec.rateWindowLabel">Prom. rendimiento:</span>
-        <select id="recRateWeeks" class="rec-select">
-          <option value="3" selected>3 semanas</option>
-          <option value="4">4 semanas</option>
-          <option value="5">5 semanas</option>
-          <option value="6">6 semanas</option>
-        </select>
       </div>
 
       <!-- Main body: 3 columns -->
@@ -777,6 +769,9 @@
         <div class="chart-card rec-exec-scurve-col">
           <div class="rec-curve-header">
             <span class="rec-curve-title" data-i18n="rec.scurveTitle">CURVA S - PROYECTO</span>
+            <button class="rec-curve-expand-btn" onclick="openScurveModal()" title="Expandir gráfico">
+              <i class="bi bi-arrows-fullscreen"></i>
+            </button>
           </div>
           <div class="rec-curve-wrap"><canvas id="recScurveChart"></canvas></div>
         </div>
@@ -784,6 +779,15 @@
         <div class="chart-card rec-exec-analysis-col">
           <div class="rec-panel-hdr">
             <span class="rec-panel-title" data-i18n="rec.analysisTitle">ANÁLISIS DE RECUPERACIÓN</span>
+            <div class="rec-rate-ctrl">
+              <span class="rec-rate-lbl" data-i18n="rec.rateWindowLabel">Prom. rendimiento:</span>
+              <select id="recRateWeeks" class="rec-rate-select">
+                <option value="3" selected>3 sem</option>
+                <option value="4">4 sem</option>
+                <option value="5">5 sem</option>
+                <option value="6">6 sem</option>
+              </select>
+            </div>
             <span class="rec-info-icon" id="recInfoIcon" title="">ⓘ</span>
           </div>
           <div id="recAnalysisRows" class="rec-analysis-rows-panel"></div>
@@ -816,7 +820,7 @@
         <!-- Levers + message (stacked) -->
         <div class="rec-exec-right-stack">
           <div class="chart-card">
-            <div class="rec-exec-section-title">PRINCIPALES PALANCAS DE RECUPERACIÓN</div>
+            <div class="rec-exec-section-title">PRINCIPALES ACTIVIDADES DE RECUPERACIÓN</div>
             <div id="recLeversTable"></div>
             <div class="rec-exec-note" id="recLeversNote"></div>
           </div>
@@ -870,6 +874,34 @@
   </div><!-- /layout -->
 </div><!-- /app -->
 
-<script src="app.js?v=4.0"></script>
+<!-- ── S-curve expand modal ───────────────────────────────────────── -->
+<div id="scurveModal" class="scurve-modal" onclick="if(event.target===this)closeScurveModal()">
+  <div class="scurve-modal-box">
+    <div class="scurve-modal-hdr">
+      <span class="scurve-modal-title">CURVA S — DESVÍO Y RECUPERACIÓN</span>
+      <div class="scurve-modal-ctrl-bar">
+        <span class="rec-ctrl-lbl">Meta de recuperación:</span>
+        <select id="recTargetWeeksModal" class="rec-select">
+          <option value="4">4 semanas</option>
+          <option value="7" selected>7 semanas</option>
+          <option value="10">10 semanas</option>
+          <option value="12">12 semanas</option>
+          <option value="16">16 semanas</option>
+        </select>
+        <span class="rec-ctrl-sep">|</span>
+        <span class="rec-ctrl-lbl">Semana objetivo:</span>
+        <span id="recTargetDateModal" class="rec-meta-date">—</span>
+      </div>
+      <button class="scurve-modal-close" onclick="closeScurveModal()" title="Cerrar">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+    <div class="scurve-modal-body">
+      <canvas id="recScurveModalChart"></canvas>
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=5.5"></script>
 </body>
 </html>

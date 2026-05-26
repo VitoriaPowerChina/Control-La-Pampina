@@ -1667,8 +1667,22 @@ tr:hover td{background:var(--surface-2)}
 
 /* S-curve card */
 .rec-curve-card{display:flex;flex-direction:column}
-.rec-curve-header{margin-bottom:10px}
+.rec-curve-header{margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .rec-curve-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted)}
+/* Expand button */
+.rec-curve-expand-btn{background:none;border:1px solid var(--border);border-radius:4px;padding:3px 7px;cursor:pointer;color:var(--text-muted);font-size:12px;line-height:1.4;transition:background .15s,color .15s;flex-shrink:0}
+.rec-curve-expand-btn:hover{background:var(--surface-2);color:var(--text)}
+/* S-curve expand modal */
+.scurve-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;align-items:center;justify-content:center}
+.scurve-modal.open{display:flex}
+.scurve-modal-box{background:var(--surface);border-radius:var(--radius-lg);box-shadow:0 24px 64px rgba(0,0,0,.4);width:92vw;max-width:1440px;padding:20px 24px;display:flex;flex-direction:column;gap:14px}
+.scurve-modal-hdr{display:flex;align-items:center;gap:14px;justify-content:space-between}
+.scurve-modal-ctrl-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.scurve-modal-title{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--text)}
+.scurve-modal-close{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:18px;padding:4px 6px;border-radius:4px;line-height:1;transition:background .15s,color .15s}
+.scurve-modal-close:hover{color:var(--text);background:var(--surface-2)}
+.scurve-modal-body{position:relative;height:68vh;min-height:380px}
+.scurve-modal-body canvas{position:absolute;inset:0;width:100%!important;height:100%!important}
 /* Fixed-height wrapper prevents the Chart.js resize loop */
 .rec-curve-wrap{position:relative;height:320px;width:100%}
 .rec-curve-wrap canvas{position:absolute;inset:0}
@@ -1676,8 +1690,12 @@ tr:hover td{background:var(--surface-2)}
 /* Analysis panel */
 .rec-panel-card{display:flex;flex-direction:column;gap:0}
 .rec-panel-hdr{display:flex;align-items:center;gap:8px;margin-bottom:14px}
-.rec-panel-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text)}
+.rec-panel-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--text);flex:1}
 .rec-info-icon{font-size:14px;color:var(--text-muted);cursor:default}
+/* Inline rate control inside analysis panel header */
+.rec-rate-ctrl{display:flex;align-items:center;gap:4px;white-space:nowrap}
+.rec-rate-lbl{font-size:9px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em}
+.rec-rate-select{font-size:10px;font-weight:600;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 4px;cursor:pointer;outline:none}
 
 /* Meta row (dropdown + date) */
 .rec-meta-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
