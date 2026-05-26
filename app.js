@@ -234,49 +234,78 @@ async function exportResumenPDF() {
   const origTxt = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando...'; }
 
+  // ── 1. Force landscape-friendly render width ──────────────────────
+  // Content height is ~900px regardless of width (fixed chart heights + grids).
+  // To get aspect > 1.43 (A4 landscape), width must be > 900 * 1.43 ≈ 1290px.
+  // We use 1500px to be safe, giving aspect ≈ 1.67 — well above 1.43.
+  const CAPTURE_W = 1500;
+  const savedWidth    = el.style.width;
+  const savedMaxWidth = el.style.maxWidth;
+  const savedMinWidth = el.style.minWidth;
+  const savedOverflow = el.style.overflow;
+  const savedHeight   = el.style.height;
+
+  el.style.width    = CAPTURE_W + 'px';
+  el.style.maxWidth = CAPTURE_W + 'px';
+  el.style.minWidth = CAPTURE_W + 'px';
+  el.style.overflow = 'visible';
+  el.style.height   = 'auto';
+  if (btn) btn.style.display = 'none';   // hide export btn from snapshot
+
+  // Wait two frames so CSS grid + charts re-layout
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
   try {
-    // Capture only the dashboard content (no sidebar)
+    const bgColor = getComputedStyle(document.documentElement)
+                      .getPropertyValue('--bg').trim() || '#f8fafc';
+
     const canvas = await html2canvas(el, {
       scale: 2,
       useCORS: true,
       allowTaint: true,
-      backgroundColor: getComputedStyle(document.documentElement)
-                         .getPropertyValue('--bg').trim() || '#f8fafc',
+      backgroundColor: bgColor,
       logging: false,
-      windowWidth: el.scrollWidth,
-      scrollX: 0, scrollY: 0
+      windowWidth: CAPTURE_W,
+      width:  CAPTURE_W,
+      height: el.scrollHeight,
+      scrollX: 0,
+      scrollY: 0
     });
 
     const { jsPDF } = window.jspdf;
-    // A4 landscape: 297 × 210 mm — fit everything on ONE page
-    const PDF_W = 297, PDF_H = 210, MARGIN = 4;
+    // A4 landscape: 297 × 210 mm — ONE page
+    const PDF_W = 297, PDF_H = 210, MARGIN = 5;
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
-    const usableW = PDF_W - MARGIN * 2;
-    const usableH = PDF_H - MARGIN * 2;
+    const usableW = PDF_W - MARGIN * 2;  // 287 mm
+    const usableH = PDF_H - MARGIN * 2;  // 200 mm
     const aspect  = canvas.width / canvas.height;
+
     let imgW, imgH;
     if (aspect > usableW / usableH) {
-      // wider than page — constrain by width
-      imgW = usableW; imgH = usableW / aspect;
+      imgW = usableW; imgH = usableW / aspect;   // constrain by width
     } else {
-      // taller than page — constrain by height
-      imgH = usableH; imgW = usableH * aspect;
+      imgH = usableH; imgW = usableH * aspect;   // constrain by height
     }
     const x = MARGIN + (usableW - imgW) / 2;
     const y = MARGIN + (usableH - imgH) / 2;
 
-    const imgData = canvas.toDataURL('image/jpeg', 0.93);
-    pdf.addImage(imgData, 'JPEG', x, y, imgW, imgH);
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.93), 'JPEG', x, y, imgW, imgH);
 
     const sem   = document.getElementById('rsMetaSemana')?.textContent?.trim() || '';
     const fecha = document.getElementById('rsMetaFecha')?.textContent?.trim()?.replace(/\//g,'-') || '';
     pdf.save(`Resumen_LaPampina_${sem || fecha || 'export'}.pdf`);
 
-  } catch(e) {
+  } catch (e) {
     alert('Error al exportar PDF: ' + e.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = origTxt; }
+    // ── Restore original styles ─────────────────────────────────────
+    el.style.width    = savedWidth;
+    el.style.maxWidth = savedMaxWidth;
+    el.style.minWidth = savedMinWidth;
+    el.style.overflow = savedOverflow;
+    el.style.height   = savedHeight;
+    if (btn) { btn.style.display = ''; btn.disabled = false; btn.innerHTML = origTxt; }
   }
 }
 
