@@ -248,19 +248,26 @@ async function exportResumenPDF() {
     });
 
     const { jsPDF } = window.jspdf;
-    // A4 landscape: 297 × 210 mm
-    const PDF_W = 297, PDF_H = 210;
+    // A4 landscape: 297 × 210 mm — fit everything on ONE page
+    const PDF_W = 297, PDF_H = 210, MARGIN = 4;
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
-    const imgW  = PDF_W;
-    const imgH  = (canvas.height / canvas.width) * imgW;
-    const pages = Math.ceil(imgH / PDF_H);
+    const usableW = PDF_W - MARGIN * 2;
+    const usableH = PDF_H - MARGIN * 2;
+    const aspect  = canvas.width / canvas.height;
+    let imgW, imgH;
+    if (aspect > usableW / usableH) {
+      // wider than page — constrain by width
+      imgW = usableW; imgH = usableW / aspect;
+    } else {
+      // taller than page — constrain by height
+      imgH = usableH; imgW = usableH * aspect;
+    }
+    const x = MARGIN + (usableW - imgW) / 2;
+    const y = MARGIN + (usableH - imgH) / 2;
 
     const imgData = canvas.toDataURL('image/jpeg', 0.93);
-    for (let p = 0; p < pages; p++) {
-      if (p > 0) pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, -p * PDF_H, imgW, imgH);
-    }
+    pdf.addImage(imgData, 'JPEG', x, y, imgW, imgH);
 
     const sem   = document.getElementById('rsMetaSemana')?.textContent?.trim() || '';
     const fecha = document.getElementById('rsMetaFecha')?.textContent?.trim()?.replace(/\//g,'-') || '';
