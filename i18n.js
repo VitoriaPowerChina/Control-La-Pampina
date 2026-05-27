@@ -337,6 +337,22 @@ es: {
   'rec.sum.critical':      '<strong>Estado Crítico:</strong> el factor de aceleración supera 1.5×. Se recomienda revisar el programa de trabajo e incrementar recursos de forma significativa.',
   'rec.sum.challenging':   '<strong>Estado Desafiante:</strong> se requiere un incremento moderado de productividad. Mantener seguimiento semanal estricto y ajustar recursos en áreas rezagadas.',
   'rec.sum.feasible':      '<strong>Estado Factible:</strong> la recuperación es alcanzable con el ritmo actual. Mantener el desempeño y monitorear el avance semanal.',
+
+  'nav.plazos':        'Plazos',
+  'pl.title':          'Seguimiento de Plazos',
+  'pl.lateTitle':      'Iniciadas con Atraso',
+  'pl.lateSub':        'Actividades con fecha de inicio pasada sin avance real registrado',
+  'pl.finTitle':       'Pendientes de Terminar',
+  'pl.finSub':         'Actividades con fecha de fin pasada que no están completadas',
+  'pl.upTitle':        'Próximos Inicios',
+  'pl.upSub':          'Actividades que iniciarán en las próximas semanas',
+  'pl.search':         'Buscar EDT o actividad…',
+  'pl.allAreas':       '— Todas las áreas —',
+  'pl.weeksLbl':       'Semanas:',
+  'pl.daysLate':       'Días de Atraso',
+  'pl.daysOverdue':    'Días Vencido',
+  'pl.daysToStart':    'Días para Inicio',
+  'pl.noData':         'No hay actividades en esta categoría.',
 },
 
 /* ═══════════════════════════════════════  ENGLISH  ═══════════════════════════ */
@@ -670,6 +686,22 @@ en: {
   'rec.sum.critical':      '<strong>Critical Status:</strong> the acceleration factor exceeds 1.5×. Significant resource increases and schedule revision are recommended.',
   'rec.sum.challenging':   '<strong>Challenging Status:</strong> a moderate productivity increase is needed. Strict weekly monitoring and resource adjustments in lagging areas are required.',
   'rec.sum.feasible':      '<strong>Feasible Status:</strong> recovery is achievable at the current pace. Maintain performance and monitor weekly progress.',
+
+  'nav.plazos':        'Deadlines',
+  'pl.title':          'Deadline Tracking',
+  'pl.lateTitle':      'Late to Start',
+  'pl.lateSub':        'Activities with a past planned start date and no real progress recorded',
+  'pl.finTitle':       'Overdue Completion',
+  'pl.finSub':         'Activities with a past planned finish date that are not complete',
+  'pl.upTitle':        'Upcoming Starts',
+  'pl.upSub':          'Activities starting within the next selected weeks',
+  'pl.search':         'Search EDT or activity…',
+  'pl.allAreas':       '— All areas —',
+  'pl.weeksLbl':       'Weeks:',
+  'pl.daysLate':       'Days Late',
+  'pl.daysOverdue':    'Days Overdue',
+  'pl.daysToStart':    'Days to Start',
+  'pl.noData':         'No activities in this category.',
 },
 
 /* ═══════════════════════════════════════  中文  ═══════════════════════════════ */
@@ -1003,6 +1035,22 @@ zh: {
   'rec.sum.critical':      '<strong>严重状态：</strong>加速系数超过1.5×。建议大幅增加资源并修订施工计划。',
   'rec.sum.challenging':   '<strong>挑战状态：</strong>需要适度提高生产效率，严格执行每周跟踪并调整滞后区域的资源。',
   'rec.sum.feasible':      '<strong>可行状态：</strong>按当前节奏可实现恢复目标。保持绩效并监控每周进度。',
+
+  'nav.plazos':        '工期追踪',
+  'pl.title':          '工期跟踪',
+  'pl.lateTitle':      '延迟开始',
+  'pl.lateSub':        '计划开始日期已过但尚未开始的活动',
+  'pl.finTitle':       '逾期未完成',
+  'pl.finSub':         '计划完成日期已过但尚未完成的活动',
+  'pl.upTitle':        '即将开始',
+  'pl.upSub':          '将在所选周数内开始的活动',
+  'pl.search':         '搜索WBS或活动…',
+  'pl.allAreas':       '— 所有区域 —',
+  'pl.weeksLbl':       '周数：',
+  'pl.daysLate':       '延迟天数',
+  'pl.daysOverdue':    '逾期天数',
+  'pl.daysToStart':    '距开始天数',
+  'pl.noData':         '此类别中没有活动。',
 }
 
 }; // end I18N

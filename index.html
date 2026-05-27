@@ -52,10 +52,10 @@
       <button class="nav-item active" data-tab="cenarios"><i class="bi bi-calendar3"></i><span data-i18n="nav.schedule">Cronograma</span></button>
       <button class="nav-item" data-tab="resumen"><i class="bi bi-bar-chart-line"></i><span data-i18n="nav.summary">Resumen</span></button>
       <button class="nav-item" data-tab="scurve"><i class="bi bi-graph-up"></i><span data-i18n="nav.scurve">Curva S</span></button>
-      <button class="nav-item" data-tab="areas"><i class="bi bi-layers"></i><span data-i18n="nav.areas">Por Área</span></button>
       <button class="nav-item" data-tab="desvios"><i class="bi bi-exclamation-triangle"></i><span data-i18n="nav.desvios">Desvíos</span></button>
       <button class="nav-item" data-tab="criticas"><i class="bi bi-exclamation-circle"></i><span data-i18n="nav.critical">Críticas</span></button>
       <button class="nav-item" data-tab="sinAvance"><i class="bi bi-pause-circle"></i><span data-i18n="nav.noProgress">Sin Avance</span></button>
+      <button class="nav-item" data-tab="plazos"><i class="bi bi-clock-history"></i><span data-i18n="nav.plazos">Plazos</span></button>
       <button class="nav-item" data-tab="ranking"><i class="bi bi-trophy"></i><span data-i18n="nav.ranking">Ranking</span></button>
       <button class="nav-item" data-tab="consolidado"><i class="bi bi-diagram-3"></i><span data-i18n="nav.consolidated">Consolidado</span></button>
       <button class="nav-item" data-tab="recovery"><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="nav.recovery">Recuperación</span></button>
@@ -281,22 +281,6 @@
       </div>
     </section>
 
-    <!-- ── POR ÁREA ────────────────────────────────────────────── -->
-    <section id="tab-areas" class="tab-pane">
-      <div class="tab-header">
-        <h2 data-i18n="ar.title">Progreso por Área / Grupo</h2>
-        <div class="filters">
-          <select id="areaLvlBox">
-            <option value="3" data-i18n-opt>Nivel 3 — Grupos principales</option>
-            <option value="4" data-i18n-opt>Nivel 4 — Subgrupos</option>
-          </select>
-        </div>
-      </div>
-      <div style="position:relative;height:300px;margin-bottom:20px">
-        <canvas id="areasBarChart"></canvas>
-      </div>
-      <div id="areasTable"></div>
-    </section>
 
     <!-- ── DESVÍOS POR ÁREAS ─────────────────────────────────────── -->
     <section id="tab-desvios" class="tab-pane">
@@ -418,6 +402,66 @@
         </div>
       </div>
       <div id="sinAvanceTable"></div>
+    </section>
+
+    <!-- ── PLAZOS ─────────────────────────────────────────────── -->
+    <section id="tab-plazos" class="tab-pane">
+      <div class="tab-header">
+        <h2 data-i18n="pl.title">Seguimiento de Plazos</h2>
+      </div>
+
+      <!-- Panel 1: Iniciadas con Atraso -->
+      <div class="plazos-panel">
+        <div class="plazos-panel-hdr plazos-late-hdr">
+          <div class="plazos-hdr-left">
+            <i class="bi bi-clock-history"></i>
+            <span data-i18n="pl.lateTitle">Iniciadas con Atraso</span>
+            <span class="plazos-badge" id="plLateCount">—</span>
+          </div>
+          <small data-i18n="pl.lateSub">Actividades con fecha de inicio pasada sin avance real registrado</small>
+        </div>
+        <div class="plazos-filters">
+          <input id="plLateSearch" type="search" data-i18n-ph="pl.search" placeholder="Buscar EDT o actividad…">
+          <select id="plLateAreaBox"><option value="">— Todas las áreas —</option></select>
+        </div>
+        <div id="plLateTable"></div>
+      </div>
+
+      <!-- Panel 2: Pendientes de Terminar -->
+      <div class="plazos-panel">
+        <div class="plazos-panel-hdr plazos-overdue-hdr">
+          <div class="plazos-hdr-left">
+            <i class="bi bi-calendar-x"></i>
+            <span data-i18n="pl.finTitle">Pendientes de Terminar</span>
+            <span class="plazos-badge" id="plFinCount">—</span>
+          </div>
+          <small data-i18n="pl.finSub">Actividades con fecha de fin pasada que no están completadas</small>
+        </div>
+        <div class="plazos-filters">
+          <input id="plFinSearch" type="search" data-i18n-ph="pl.search" placeholder="Buscar EDT o actividad…">
+          <select id="plFinAreaBox"><option value="">— Todas las áreas —</option></select>
+        </div>
+        <div id="plFinTable"></div>
+      </div>
+
+      <!-- Panel 3: Próximos Inicios -->
+      <div class="plazos-panel">
+        <div class="plazos-panel-hdr plazos-upcoming-hdr">
+          <div class="plazos-hdr-left">
+            <i class="bi bi-calendar-check"></i>
+            <span data-i18n="pl.upTitle">Próximos Inicios</span>
+            <span class="plazos-badge" id="plUpCount">—</span>
+          </div>
+          <small data-i18n="pl.upSub">Actividades que iniciarán en las próximas semanas</small>
+        </div>
+        <div class="plazos-filters">
+          <input id="plUpSearch" type="search" data-i18n-ph="pl.search" placeholder="Buscar EDT o actividad…">
+          <select id="plUpAreaBox"><option value="">— Todas las áreas —</option></select>
+          <label class="plazos-weeks-lbl"><span data-i18n="pl.weeksLbl">Semanas:</span><input id="plUpWeeks" type="number" min="1" max="52" value="4" class="plazos-weeks-inp"></label>
+        </div>
+        <div id="plUpTable"></div>
+      </div>
+
     </section>
 
     <!-- ── RANKING ─────────────────────────────────────────────── -->

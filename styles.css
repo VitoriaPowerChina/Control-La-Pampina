@@ -1761,3 +1761,59 @@ tr:hover td{background:var(--surface-2)}
 /* Chart footer */
 .rec-chart-footer{margin-top:6px;font-size:11px;color:var(--text-muted);text-align:center}
 .rec-chart-footer b{color:var(--danger)}
+
+/* ── Plazos tab ──────────────────────────────────────────────────────── */
+.plazos-panel{
+  margin-bottom:24px;border-radius:var(--radius-lg);
+  border:1px solid var(--border);overflow:hidden;
+  background:var(--surface);box-shadow:var(--shadow);
+}
+.plazos-panel-hdr{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 16px;flex-wrap:wrap;
+}
+.plazos-hdr-left{
+  display:flex;align-items:center;gap:8px;
+  font-weight:700;font-size:14px;flex:1;
+}
+.plazos-late-hdr   {background:rgba(192,0,0,.07);  border-left:4px solid var(--danger); color:var(--danger)}
+.plazos-overdue-hdr{background:rgba(234,88,12,.07); border-left:4px solid #ea580c;       color:#ea580c}
+.plazos-upcoming-hdr{background:rgba(37,99,235,.07);border-left:4px solid var(--primary);color:var(--primary)}
+.plazos-late-hdr    .plazos-badge{background:var(--danger);color:#fff}
+.plazos-overdue-hdr .plazos-badge{background:#ea580c;color:#fff}
+.plazos-upcoming-hdr .plazos-badge{background:var(--primary);color:#fff}
+.plazos-badge{
+  font-size:11px;font-weight:700;
+  padding:2px 9px;border-radius:20px;min-width:28px;text-align:center;
+}
+.plazos-panel-hdr small{font-size:11px;opacity:.8;margin-left:auto}
+.plazos-filters{
+  display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+  padding:10px 16px;border-top:1px solid var(--border);
+  background:var(--surface-2);
+}
+.plazos-filters input[type=search],
+.plazos-filters select{
+  background:var(--surface);border:1px solid var(--border);
+  color:var(--text);border-radius:var(--radius);
+  padding:7px 11px;font-size:13px;outline:none;
+  transition:border-color var(--t),box-shadow var(--t);
+}
+.plazos-filters input[type=search]{min-width:180px}
+.plazos-filters input[type=search]:focus,
+.plazos-filters select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+.plazos-weeks-lbl{
+  display:flex;align-items:center;gap:6px;
+  font-size:13px;color:var(--text-muted);white-space:nowrap;
+}
+.plazos-weeks-inp{
+  width:60px;text-align:center;
+  background:var(--surface);border:1px solid var(--border);
+  color:var(--text);border-radius:var(--radius);
+  padding:7px 6px;font-size:13px;outline:none;
+}
+.plazos-weeks-inp:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+.plazos-empty{padding:20px 16px;color:var(--text-muted);font-size:13px}
+.plazos-days-late   {font-weight:700;color:var(--danger);font-variant-numeric:tabular-nums}
+.plazos-days-overdue{font-weight:700;color:#ea580c;font-variant-numeric:tabular-nums}
+.plazos-days-upcoming{font-weight:600;color:var(--primary);font-variant-numeric:tabular-nums}
