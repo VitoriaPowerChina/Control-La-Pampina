@@ -15,7 +15,10 @@ let _simTabMode = 'pb';      // current add-form mode in Simulador tab
 let _recTargetWeeks    = 7;     // Recovery analysis — target weeks for the analysis
 let _recRateWeeks      = 3;     // Recovery analysis — weeks to average for recent rate
 let _recCalloutVisible = false; // Recovery S-curve: show endpoint callout on hover only
+let _rsCalloutVisible  = false; // Resumen S-curve: show endpoint callout on hover only
 let _top5SortAsc = true;        // Resumen top5: true = ascending deviation (most negative first)
+let _rsTargetWeeks     = 7;     // Resumen tab S-curve — recovery target weeks (independent)
+let _rsRateWeeks       = 3;     // Resumen tab analysis panel — recent rate window (independent)
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -349,6 +352,41 @@ function setupRecovery() {
       }
     });
   }
+
+  // ── Resumen analysis panel — recent rate window ──────────────────────────────
+  const rsRateSel = document.getElementById('rsRateWeeks');
+  if (rsRateSel) {
+    rsRateSel.addEventListener('change', () => {
+      _rsRateWeeks = parseInt(rsRateSel.value, 10) || 3;
+      if (D) _tryRender(renderResumen);
+    });
+  }
+
+  // ── Resumen S-curve week selector (card) ──────────────────────────────────
+  const rsScurveSel = document.getElementById('rsScurveTargetWeeks');
+  if (rsScurveSel) {
+    rsScurveSel.addEventListener('change', () => {
+      _rsTargetWeeks = parseInt(rsScurveSel.value, 10) || 7;
+      const modalSel = document.getElementById('rsScurveTargetWeeksModal');
+      if (modalSel) modalSel.value = rsScurveSel.value;
+      if (D) { _tryRender(renderResMiniScurve); _syncRsTargetDate(); }
+    });
+  }
+
+  // ── Resumen S-curve week selector (modal) ─────────────────────────────────
+  const rsScurveSelModal = document.getElementById('rsScurveTargetWeeksModal');
+  if (rsScurveSelModal) {
+    rsScurveSelModal.addEventListener('change', () => {
+      _rsTargetWeeks = parseInt(rsScurveSelModal.value, 10) || 7;
+      const mainSel = document.getElementById('rsScurveTargetWeeks');
+      if (mainSel) mainSel.value = rsScurveSelModal.value;
+      if (D) {
+        _tryRender(renderResMiniScurve);
+        _syncRsTargetDate();
+        requestAnimationFrame(() => renderResMiniScurve('rsScurveModalChart'));
+      }
+    });
+  }
 }
 
 /**
@@ -458,7 +496,8 @@ function renderRecovery() {
   set('recFooterLegend', `${targetWkLbl}: semana objetivo del proyecto`);
 
   // ── Donut + area table ───────────────────────────────────────────────────
-  _renderRecDesvDonut();
+  // Pass actual S-curve deviation so the total row matches DESVÍO ACUM.
+  _renderRecDesvDonut(pctReal - pctPlan);
 
   // ── Top activities ───────────────────────────────────────────────────────
   _renderRecTopActivities(devPP);
@@ -591,7 +630,7 @@ function renderRecovery() {
   _tryRender(renderRecWeekly);
 }
 
-function _renderRecDesvDonut() {
+function _renderRecDesvDonut(scDeviation) {
   const canvas = document.getElementById('recDesvAreaDonut');
   const tableEl = document.getElementById('recDesvAreaTable');
   if (!canvas || !D) return;
@@ -639,7 +678,11 @@ function _renderRecDesvDonut() {
 
   const totalEl = document.getElementById('recDesvTotalRow');
   if (totalEl) {
-    const tot = areas.reduce((s, a) => s + a.desvPond * 100, 0);
+    // Use the S-curve deviation (pctReal - pctPlan) when available so it matches
+    // the DESVÍO ACUM. KPI; fall back to summing area desvPond otherwise.
+    const tot = scDeviation != null
+      ? scDeviation * 100
+      : areas.reduce((s, a) => s + a.desvPond * 100, 0);
     totalEl.innerHTML = `<span>DESVÍO TOTAL DEL PROYECTO</span><span style="color:var(--danger);font-weight:800">${tot.toFixed(2)} p.p.</span>`;
   }
 }
@@ -786,10 +829,15 @@ function _renderRecMessage(dev, pctReal, recNeeded, reqRate, accelFactor) {
 
 /** S-curve: reference design — plan / real / deviation fill / recovery line + annotations
  *  @param {string} [canvasId='recScurveChart'] — target canvas id (pass modal id to render there)
+ *  @param {number} [tw]                         — override target weeks (default: _recTargetWeeks)
  */
-function renderRecScurve(canvasId) {
+function renderRecScurve(canvasId, tw) {
   canvasId = canvasId || 'recScurveChart';
-  const isModal = canvasId !== 'recScurveChart';
+  const targetWeeks = (tw != null ? tw : _recTargetWeeks);
+  // Modal = either of the two modal canvases; callout always visible
+  const isModal     = canvasId === 'recScurveModalChart' || canvasId === 'rsScurveModalChart';
+  // Is this the Resumen mini chart (or its modal)?
+  const isResumen   = canvasId === 'resMiniScurve' || canvasId === 'rsScurveModalChart';
   const canvas = document.getElementById(canvasId);
   if (!canvas || !D) return;
 
@@ -801,21 +849,19 @@ function renderRecScurve(canvasId) {
   const planAtCurr = sc[currIdx].plan  || 0;
   const deviation  = pctReal - planAtCurr;           // negative = behind plan
 
-  const targetIdx  = Math.min(sc.length - 1, currIdx + _recTargetWeeks);
+  const targetIdx  = Math.min(sc.length - 1, currIdx + targetWeeks);
   const planAtTgt  = sc[targetIdx]?.plan || 0;
   const recNeeded  = Math.max(0, planAtTgt - pctReal);
-  const reqRate    = _recTargetWeeks > 0 ? recNeeded / _recTargetWeeks : 0;
+  const reqRate    = targetWeeks > 0 ? recNeeded / targetWeeks : 0;
   const targetWeekLabel = sc[targetIdx]?.week || '';
 
-  // ── Clipped view: HIST_CTX weeks of history + full recovery window ──────────
-  // This gives each week proper horizontal space in the chart.
-  const HIST_CTX = 8;                                      // weeks of context before cutoff
-  const viewStart = Math.max(0, currIdx - HIST_CTX);
+  // ── Full view: start from week 0, end at target week ─────────────────────────
+  const viewStart = 0;
   const viewEnd   = targetIdx;
   const scView    = sc.slice(viewStart, viewEnd + 1);
-  // Re-map indices into the clipped array
-  const ci = currIdx - viewStart;   // cutoff index within scView
-  const ti = targetIdx - viewStart; // target index within scView
+  // ci/ti are the same as currIdx/targetIdx since viewStart = 0
+  const ci = currIdx;
+  const ti = targetIdx;
 
   const weekLabels = scView.map(s => s.week);
   const planData   = scView.map(s => +(s.plan * 100).toFixed(2));
@@ -828,20 +874,23 @@ function renderRecScurve(canvasId) {
   const planRange = planAtTgt - planAtCurr;
   const recovData = scView.map((s, i) => {
     if (i < ci || i > ti) return null;
-    const t = planRange !== 0 ? (s.plan - planAtCurr) / planRange : (i - ci) / _recTargetWeeks;
+    const t = planRange !== 0 ? (s.plan - planAtCurr) / planRange : (i - ci) / targetWeeks;
     const v = pctReal + t * (planAtTgt - pctReal);
     return +(Math.min(1, Math.max(0, v)) * 100).toFixed(2);
   });
 
-  // X-axis: every week labeled — history every 2 weeks, recovery every week
+  // X-axis ticks: ~8 labels in history, every week in recovery window
+  const histStep = Math.max(1, Math.round(ci / 8));
   const xTickLabels = scView.map((s, i) => {
-    if (i >= ci) return s.week;                // all recovery weeks (ci to ti)
-    return (i % 2 === 0) ? s.week : null;      // history every 2 weeks
+    if (i >= ci) return s.week;                          // every week in recovery
+    return (i % histStep === 0) ? s.week : null;         // sparse in history
   });
 
-  // Update chart card title dynamically
-  const titleEl = document.querySelector('.rec-curve-title');
-  if (titleEl) titleEl.textContent = `CURVA S - PROYECTO  (Meta de recuperación: ${_recTargetWeeks} semanas)`;
+  // Update chart card title dynamically (only for the main recovery chart)
+  if (canvasId === 'recScurveChart') {
+    const titleEl = document.querySelector('.rec-curve-title');
+    if (titleEl) titleEl.textContent = `CURVA S - PROYECTO  (Meta de recuperación: ${targetWeeks} semanas)`;
+  }
 
   // ── Annotation plugin ────────────────────────────────────────────────────────
   const annotPlugin = {
@@ -924,12 +973,13 @@ function renderRecScurve(canvasId) {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // 5. Callout box at endpoint — always visible in modal; hover-controlled in main chart
-      const showCallout = isModal || _recCalloutVisible;
+      // 5. Callout box at endpoint — always visible in modal; hover-controlled in card charts
+      const calloutFlag = isResumen ? _rsCalloutVisible : _recCalloutVisible;
+      const showCallout = isModal || calloutFlag;
       if (showCallout) {
         const boxLines = [
           'Recuperación estimada',
-          `en ${_recTargetWeeks} semanas`,
+          `en ${targetWeeks} semanas`,
           `(semana objetivo: ${targetWeekLabel})`,
         ];
         ctx.font = 'bold 11px sans-serif';
@@ -979,7 +1029,7 @@ function renderRecScurve(canvasId) {
           data: realData, borderColor: '#166534',
           borderWidth: 2.5, pointRadius: 0, fill: false, tension: 0.3, spanGaps: false, order: 3 },
         // 2 — Recovery line (orange dashed, stops at targetIdx)
-        { label: `${t('rec.lbl.recovery')} (meta ${_recTargetWeeks} sem)`,
+        { label: `${t('rec.lbl.recovery')} (meta ${targetWeeks} sem)`,
           data: recovData, borderColor: '#f97316',
           borderWidth: 2, borderDash: [8, 5], pointRadius: 0,
           fill: false, tension: 0.3, spanGaps: false, order: 2 },
@@ -1040,7 +1090,7 @@ function renderRecScurve(canvasId) {
               if (i == null || i !== currIdx) return [];
               return [
                 `── ${t('rec.cutoffLbl')} ──`,
-                `Plan en sem.+${_recTargetWeeks}: ${(planAtTgt * 100).toFixed(2)}%`,
+                `Plan en sem.+${targetWeeks}: ${(planAtTgt * 100).toFixed(2)}%`,
                 `Desvío actual: ${(deviation * 100).toFixed(2)} p.p.`,
               ];
             }
@@ -1068,22 +1118,30 @@ function renderRecScurve(canvasId) {
     },
   });
 
-  // Hover listeners: only for the main chart (modal always shows callout)
+  // Hover listeners: card charts only (modals always show callout)
   const ch = charts[canvasId];
   if (ch && !isModal) {
-    if (canvas._recHoverFn)   canvas.removeEventListener('mousemove',  canvas._recHoverFn);
-    if (canvas._recLeaveFn)   canvas.removeEventListener('mouseleave', canvas._recLeaveFn);
+    if (canvas._recHoverFn)  canvas.removeEventListener('mousemove',  canvas._recHoverFn);
+    if (canvas._recLeaveFn)  canvas.removeEventListener('mouseleave', canvas._recLeaveFn);
 
     canvas._recHoverFn = (e) => {
-      const rect    = canvas.getBoundingClientRect();
-      const mx      = e.clientX - rect.left;
-      const tgtPx   = ch.scales.x?.getPixelForValue(ti);
-      const was     = _recCalloutVisible;
-      _recCalloutVisible = tgtPx != null && Math.abs(mx - tgtPx) < 40;
-      if (_recCalloutVisible !== was) ch.draw();
+      const rect  = canvas.getBoundingClientRect();
+      const mx    = e.clientX - rect.left;
+      const tgtPx = ch.scales.x?.getPixelForValue(ti);
+      const vis   = tgtPx != null && Math.abs(mx - tgtPx) < 40;
+      if (isResumen) {
+        const was = _rsCalloutVisible;
+        _rsCalloutVisible = vis;
+        if (_rsCalloutVisible !== was) ch.draw();
+      } else {
+        const was = _recCalloutVisible;
+        _recCalloutVisible = vis;
+        if (_recCalloutVisible !== was) ch.draw();
+      }
     };
     canvas._recLeaveFn = () => {
-      if (_recCalloutVisible) { _recCalloutVisible = false; ch.draw(); }
+      if (isResumen && _rsCalloutVisible)  { _rsCalloutVisible  = false; ch.draw(); }
+      if (!isResumen && _recCalloutVisible){ _recCalloutVisible = false; ch.draw(); }
     };
     canvas.addEventListener('mousemove',  canvas._recHoverFn);
     canvas.addEventListener('mouseleave', canvas._recLeaveFn);
@@ -1253,6 +1311,7 @@ function render() {
   _tryRender(renderKPIs);
   _tryRender(renderResumen);
   _tryRender(renderResMiniScurve);
+  _syncRsTargetDate();
   _tryRender(renderRsDesvAreaDonut);
   _tryRender(renderAreaChart);
   _tryRender(renderScurve);
@@ -1653,7 +1712,7 @@ function renderResumen() {
   const planAtTarget = sc[targetIdx]?.plan || 0;
   const recNeeded = Math.max(0, planAtTarget - pctReal);
   const reqRate   = _recTargetWeeks > 0 ? recNeeded / _recTargetWeeks : 0;
-  const recentRate = _recRecentRate(sc, currIdx, _recRateWeeks);
+  const recentRate = _recRecentRate(sc, currIdx, _rsRateWeeks);
   const accelFactor = recentRate > 0 ? reqRate / recentRate : null;
   const optRate  = reqRate * 1.2;
   const optWeeks = optRate > 0 ? Math.ceil(recNeeded / optRate) : null;
@@ -1700,8 +1759,8 @@ function _rsRenderAnalysis(pctPlan, pctReal, dev, planAtTarget, recNeeded, reqRa
     { lbl: 'Desvío acumulado',          val: (dev >= 0?'+':'')+pct(dev),        cls: dev < 0 ? 'rs-val-neg' : 'rs-val-ok' },
     { lbl: `Plan en sem. +${_recTargetWeeks}`, val: pct(planAtTarget) },
     { lbl: 'Recuperación necesaria',    val: pct(recNeeded),                     highlight: true },
-    { lbl: 'Tasa req. (% / sem)',       val: (reqRate*100).toFixed(3)+'%',       highlight: true },
-    { lbl: `Tasa reciente (${_recRateWeeks} sem)`, val: (recentRate*100).toFixed(3)+'%' },
+    { lbl: 'Tasa req. (% / sem)',       val: (reqRate*100).toFixed(2)+'%',       highlight: true },
+    { lbl: `Tasa reciente (${_rsRateWeeks} sem)`, val: (recentRate*100).toFixed(2)+'%' },
     { lbl: 'Factor aceleración',        val: accelFactor!=null ? accelFactor.toFixed(2)+'x' : '—',
       cls: accelFactor != null ? (accelFactor > 2 ? 'rs-val-neg' : accelFactor > 1.2 ? 'rs-val-warn' : 'rs-val-ok') : '' },
   ];
@@ -1827,78 +1886,41 @@ function _rsRenderMessage(dev, pctReal, recNeeded, reqRate, accelFactor) {
     </div>`).join('');
 }
 
-// ── Mini S-Curve for Resumen tab (with deviation fill + recovery projection) ──
-function renderResMiniScurve() {
-  const canvas = document.getElementById('resMiniScurve');
-  if (!canvas || !D) return;
+// ── Resumen S-curve: delegates to the shared renderRecScurve engine ────────────
+function renderResMiniScurve(canvasId) {
+  canvasId = canvasId || 'resMiniScurve';
+  _syncRsTargetDate();
+  renderRecScurve(canvasId, _rsTargetWeeks);
+}
+
+// ── Sync Resumen S-curve target date labels ───────────────────────────────────
+function _syncRsTargetDate() {
+  if (!D) return;
   const sc = D.scurve;
   const currIdx = sc.findIndex(s => s.isCurrent);
-  const pctReal = currIdx >= 0 ? (sc[currIdx].real || 0) : 0;
+  if (currIdx < 0) return;
+  const targetIdx = Math.min(sc.length - 1, currIdx + _rsTargetWeeks);
+  const week = sc[targetIdx]?.week || '—';
+  const el1 = document.getElementById('rsScurveTargetDate');
+  const el2 = document.getElementById('rsScurveTargetDateModal');
+  if (el1) el1.textContent = week;
+  if (el2) el2.textContent = week;
+}
 
-  // Recovery projection line from current to planAtTarget
-  const targetIdx = Math.min(sc.length - 1, currIdx + _recTargetWeeks);
-  const planAtTarget = sc[targetIdx]?.plan || 0;
-  const recNeeded = Math.max(0, planAtTarget - pctReal);
-  const reqRate   = _recTargetWeeks > 0 ? recNeeded / _recTargetWeeks : 0;
-
-  const labels   = sc.map(s => s.week);
-  const planData = sc.map(s => +(s.plan * 100).toFixed(2));
-  const realData = sc.map(s => s.real != null ? +(s.real * 100).toFixed(2) : null);
-
-  // Recovery projection: starts at currIdx, stops exactly at targetIdx
-  // so it visually meets the plan line only at the target week
-  const recovData = sc.map((_, i) => {
-    if (currIdx < 0 || i < currIdx || i > targetIdx) return null;
-    return +(Math.min(1, pctReal + reqRate * (i - currIdx)) * 100).toFixed(2);
-  });
-
-  const cutoffPlugin = {
-    id: 'rsMiniCutoff',
-    afterDraw(chart) {
-      if (currIdx < 0) return;
-      const { ctx, scales: { x, y } } = chart;
-      const xPx = x.getPixelForValue(currIdx);
-      ctx.save();
-      ctx.strokeStyle = 'rgba(100,116,139,.55)';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath(); ctx.moveTo(xPx, y.top); ctx.lineTo(xPx, y.bottom); ctx.stroke();
-      ctx.fillStyle = 'rgba(100,116,139,.75)';
-      ctx.font = '9px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Corte', xPx, y.top - 3);
-      ctx.restore();
-    }
-  };
-
-  destroyChart('resMiniScurve');
-  charts['resMiniScurve'] = new Chart(canvas, {
-    type: 'line',
-    plugins: [cutoffPlugin],
-    data: {
-      labels,
-      datasets: [
-        { label: 'Plan',  data: planData,  borderColor:'#2563eb', borderWidth:2,
-          fill: false, pointRadius:0, tension:0.3, order:1 },
-        { label: 'Real',  data: realData,  borderColor:'#16a34a', borderWidth:2,
-          fill: { target:0, above:'transparent', below:'rgba(192,0,0,.13)' },
-          pointRadius:0, tension:0.3, order:2 },
-        { label: 'Recuperación req.', data: recovData, borderColor:'#f0a500', borderWidth:2,
-          borderDash:[5,3], fill:false, pointRadius:0, tension:0, spanGaps:false, order:3 },
-      ]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { position:'bottom', labels:{ boxWidth:12, font:{ size:10 }, padding:8 } },
-        tooltip: { mode:'index', intersect:false },
-      },
-      scales: {
-        x: { ticks:{ maxTicksLimit:8, font:{ size:9 }, maxRotation:0 }, grid:{ display:false } },
-        y: { min:0, max:100, ticks:{ callback: v => v+'%', font:{ size:10 } } }
-      },
-    }
-  });
+// ── Resumen S-curve modal open/close ──────────────────────────────────────────
+function openRsScurveModal() {
+  const modal = document.getElementById('rsScurveModal');
+  if (!modal) return;
+  const mainSel  = document.getElementById('rsScurveTargetWeeks');
+  const modalSel = document.getElementById('rsScurveTargetWeeksModal');
+  if (mainSel && modalSel) modalSel.value = mainSel.value;
+  _syncRsTargetDate();
+  modal.classList.add('open');
+  requestAnimationFrame(() => requestAnimationFrame(() => renderResMiniScurve('rsScurveModalChart')));
+}
+function closeRsScurveModal() {
+  document.getElementById('rsScurveModal')?.classList.remove('open');
+  destroyChart('rsScurveModalChart');
 }
 
 // ── Deviation-by-area donut for Resumen tab ───────────────────────────────────
@@ -2467,13 +2489,16 @@ function renderSinAvanceCharts(rows) {
 function renderSinAvanceTable(rows) {
   const sinAvanceTableEl = document.getElementById('sinAvanceTable');
   if (!sinAvanceTableEl) return;
+  const sort = document.getElementById('sinSort')?.value || 'incidencia';
+  const incHdr = `${t('th.incidence')}${sort === 'incidencia' ? ' ▼' : ''}`;
+  const plnHdr = `${t('th.pctPlan')}${sort === 'pctPlan' ? ' ▼' : ''}`;
   sinAvanceTableEl.innerHTML = tableWrap(
     `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.start')}</th><th>${t('th.end')}</th>
-     <th>${t('th.hh')}</th><th>${t('th.incidence')}</th><th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th></tr>`,
+     <th>${t('th.hh')}</th><th>${incHdr}</th><th>${plnHdr}</th><th>${t('th.pctActual')}</th></tr>`,
     rows.map((r,i) => `<tr>
       <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
       <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
-      <td>${Math.round(r.hh).toLocaleString()}</td><td>${pct(r.incidencia,4)}</td>
+      <td>${Math.round(r.hh).toLocaleString()}</td><td>${pct(r.incidencia,2)}</td>
       <td>${pct(r.pctCompPlan)}</td><td class="dev-neg">0.0%</td>
     </tr>`).join('')
   );
@@ -3320,15 +3345,25 @@ function setupTabFilters() {
 
   function updateSin() {
     if (!D) return;
-    const q = document.getElementById('sinSearch').value.toLowerCase();
+    const q    = document.getElementById('sinSearch').value.toLowerCase();
     const area = document.getElementById('sinAreaBox').value;
-    const rows = D.sinAvance.filter(r =>
+    const sort = document.getElementById('sinSort')?.value || 'incidencia';
+
+    let rows = D.sinAvance.filter(r =>
       (!q    || r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)) &&
       (!area || r.edt.startsWith(area)));
+
+    if (sort === 'pctPlan') {
+      rows = [...rows].sort((a, b) => b.pctCompPlan - a.pctCompPlan);
+    } else {
+      rows = [...rows].sort((a, b) => b.incidencia - a.incidencia);
+    }
+
     renderSinAvanceCharts(rows); renderSinAvanceTable(rows);
   }
   on('sinSearch',  'input',  updateSin);
   on('sinAreaBox', 'change', updateSin);
+  on('sinSort',    'change', updateSin);
 
   function updateRank() {
     if (!D) return;

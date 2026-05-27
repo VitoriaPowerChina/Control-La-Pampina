@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=4.9">
+  <link rel="stylesheet" href="styles.css?v=5.0">
   <script src="i18n.js?v=1.7"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -173,11 +173,42 @@
         <!-- ── Row 2: S-curve | Análisis | Desvío por área ── -->
         <div class="rs-row2">
           <div class="chart-card">
-            <div class="rs-card-hdr">CURVA S — DESVÍO Y RECUPERACIÓN</div>
+            <div class="rs-scurve-hdr">
+              <span class="rs-scurve-title">CURVA S — DESVÍO Y RECUPERACIÓN</span>
+              <div class="rs-scurve-ctrl">
+                <span class="rec-rate-lbl">Meta:</span>
+                <select id="rsScurveTargetWeeks" class="rec-select">
+                  <option value="4">+4 sem</option>
+                  <option value="5">+5 sem</option>
+                  <option value="6">+6 sem</option>
+                  <option value="7" selected>+7 sem</option>
+                  <option value="8">+8 sem</option>
+                  <option value="9">+9 sem</option>
+                  <option value="10">+10 sem</option>
+                  <option value="12">+12 sem</option>
+                  <option value="16">+16 sem</option>
+                </select>
+                <span id="rsScurveTargetDate" class="rec-meta-date">—</span>
+                <button class="rec-curve-expand-btn" onclick="openRsScurveModal()" title="Expandir">
+                  <i class="bi bi-arrows-fullscreen"></i>
+                </button>
+              </div>
+            </div>
             <div class="rs-scurve-wrap"><canvas id="resMiniScurve"></canvas></div>
           </div>
           <div class="chart-card">
-            <div class="rs-card-hdr">ANÁLISIS DE RECUPERACIÓN</div>
+            <div class="rec-panel-hdr" style="margin-bottom:10px">
+              <span class="rec-panel-title">ANÁLISIS DE RECUPERACIÓN</span>
+              <div class="rec-rate-ctrl">
+                <span class="rec-rate-lbl">Prom. rendimiento:</span>
+                <select id="rsRateWeeks" class="rec-rate-select">
+                  <option value="3" selected>3 sem</option>
+                  <option value="4">4 sem</option>
+                  <option value="5">5 sem</option>
+                  <option value="6">6 sem</option>
+                </select>
+              </div>
+            </div>
             <div id="rsAnalysisPanel" class="rs-analysis-rows"></div>
           </div>
           <div class="chart-card">
@@ -211,16 +242,10 @@
           </div>
         </div>
 
-        <!-- ── Row 4: Palancas | Mensaje ── -->
-        <div class="rs-row3">
-          <div class="chart-card">
-            <div class="rs-card-hdr">ACTIVIDADES DE RECUPERACIÓN</div>
-            <div id="rsLeversPanel" class="rs-levers-panel"></div>
-          </div>
-          <div class="chart-card rs-msg-card">
-            <div class="rs-card-hdr">MENSAJE EJECUTIVO</div>
-            <div id="rsMessagePanel" class="rs-message-panel"></div>
-          </div>
+        <!-- ── Row 4: Mensaje ejecutivo (full width) ── -->
+        <div class="chart-card rs-msg-card">
+          <div class="rs-card-hdr">MENSAJE EJECUTIVO</div>
+          <div id="rsMessagePanel" class="rs-message-panel"></div>
         </div>
 
         <!-- ── Footer ── -->
@@ -371,6 +396,10 @@
         <div class="filters">
           <input id="sinSearch" type="search" data-i18n-ph="sin.search" placeholder="Buscar EDT o actividad…">
           <select id="sinAreaBox"><option value="">— Todas las áreas —</option></select>
+          <select id="sinSort">
+            <option value="incidencia">Ordenar: Incidencia ↓</option>
+            <option value="pctPlan">Ordenar: % Plan ↓ (más atrasadas)</option>
+          </select>
         </div>
       </div>
       <p class="subtitle" data-i18n="sin.subtitle">Actividades con % Plan &gt; 0 y % Real = 0</p>
@@ -753,7 +782,11 @@
         <span class="rec-ctrl-lbl" data-i18n="rec.targetLabel">Meta de recuperación:</span>
         <select id="recTargetWeeks" class="rec-select">
           <option value="4">4 semanas</option>
+          <option value="5">5 semanas</option>
+          <option value="6">6 semanas</option>
           <option value="7" selected>7 semanas</option>
+          <option value="8">8 semanas</option>
+          <option value="9">9 semanas</option>
           <option value="10">10 semanas</option>
           <option value="12">12 semanas</option>
           <option value="16">16 semanas</option>
@@ -883,7 +916,11 @@
         <span class="rec-ctrl-lbl">Meta de recuperación:</span>
         <select id="recTargetWeeksModal" class="rec-select">
           <option value="4">4 semanas</option>
+          <option value="5">5 semanas</option>
+          <option value="6">6 semanas</option>
           <option value="7" selected>7 semanas</option>
+          <option value="8">8 semanas</option>
+          <option value="9">9 semanas</option>
           <option value="10">10 semanas</option>
           <option value="12">12 semanas</option>
           <option value="16">16 semanas</option>
@@ -902,6 +939,38 @@
   </div>
 </div>
 
-<script src="app.js?v=5.5"></script>
+<!-- ── Resumen S-curve expand modal ──────────────────────────────── -->
+<div id="rsScurveModal" class="scurve-modal" onclick="if(event.target===this)closeRsScurveModal()">
+  <div class="scurve-modal-box">
+    <div class="scurve-modal-hdr">
+      <span class="scurve-modal-title">CURVA S — DESVÍO Y RECUPERACIÓN</span>
+      <div class="scurve-modal-ctrl-bar">
+        <span class="rec-ctrl-lbl">Meta de recuperación:</span>
+        <select id="rsScurveTargetWeeksModal" class="rec-select">
+          <option value="4">+4 semanas</option>
+          <option value="5">+5 semanas</option>
+          <option value="6">+6 semanas</option>
+          <option value="7" selected>+7 semanas</option>
+          <option value="8">+8 semanas</option>
+          <option value="9">+9 semanas</option>
+          <option value="10">+10 semanas</option>
+          <option value="12">+12 semanas</option>
+          <option value="16">+16 semanas</option>
+        </select>
+        <span class="rec-ctrl-sep">|</span>
+        <span class="rec-ctrl-lbl">Semana objetivo:</span>
+        <span id="rsScurveTargetDateModal" class="rec-meta-date">—</span>
+      </div>
+      <button class="scurve-modal-close" onclick="closeRsScurveModal()" title="Cerrar">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+    <div class="scurve-modal-body">
+      <canvas id="rsScurveModalChart"></canvas>
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=6.4"></script>
 </body>
 </html>

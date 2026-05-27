@@ -513,6 +513,12 @@ h2{font-size:15px;font-weight:700;color:var(--text);margin-bottom:14px;letter-sp
   color:var(--text-muted);border-bottom:1px solid var(--border);
   padding-bottom:8px;margin-bottom:10px;
 }
+/* S-curve card header (with filter + expand) */
+.rs-scurve-hdr{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-muted);border-bottom:1px solid var(--border);padding-bottom:8px;margin-bottom:10px}
+.rs-scurve-title{flex:1;white-space:nowrap}
+.rs-scurve-ctrl{display:flex;align-items:center;gap:5px;flex-shrink:0}
 /* S-curve wrap */
 .rs-scurve-wrap{position:relative;height:220px;width:100%}
 .rs-scurve-wrap canvas{position:absolute;inset:0}
