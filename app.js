@@ -14,8 +14,6 @@ let _simTabRows = [];        // { edt, delta, mode:'pb'|'pct' }                 
 let _simTabMode = 'pb';      // current add-form mode in Simulador tab
 let _recTargetWeeks    = 7;     // Recovery analysis — target weeks for the analysis
 let _recRateWeeks      = 3;     // Recovery analysis — weeks to average for recent rate
-let _recCalloutVisible = false; // Recovery S-curve: show endpoint callout on hover only
-let _rsCalloutVisible  = false; // Resumen S-curve: show endpoint callout on hover only
 let _top5SortAsc = true;        // Resumen top5: true = ascending deviation (most negative first)
 let _rsTargetWeeks     = 7;     // Resumen tab S-curve — recovery target weeks (independent)
 let _rsRateWeeks       = 3;     // Resumen tab analysis panel — recent rate window (independent)
@@ -973,41 +971,6 @@ function renderRecScurve(canvasId, tw) {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // 5. Callout box at endpoint — always visible in modal; hover-controlled in card charts
-      const calloutFlag = isResumen ? _rsCalloutVisible : _recCalloutVisible;
-      const showCallout = isModal || calloutFlag;
-      if (showCallout) {
-        const boxLines = [
-          'Recuperación estimada',
-          `en ${targetWeeks} semanas`,
-          `(semana objetivo: ${targetWeekLabel})`,
-        ];
-        ctx.font = 'bold 11px sans-serif';
-        const maxW = Math.max(...boxLines.map(l => ctx.measureText(l).width));
-        const bW = maxW + 24;
-        const bH = 56;
-        const bPad = 12;
-        // Position box to the left of the dot; flip right if no room
-        let bX = tgtX - bW - bPad;
-        if (bX < chartArea.left + 4) bX = tgtX + bPad;
-        const bY = Math.max(chartArea.top + 4, tgtY - bH / 2);
-
-        ctx.fillStyle = 'rgba(239,246,255,.95)';
-        ctx.strokeStyle = '#2563eb';
-        ctx.lineWidth = 1.5;
-        _rrect(ctx, bX, bY, bW, bH, 7);
-        ctx.fill(); ctx.stroke();
-
-        ctx.fillStyle = '#1e40af';
-        ctx.textAlign = 'center';
-        const cx = bX + bW / 2;
-        ctx.font = 'bold 11px sans-serif';
-        ctx.fillText(boxLines[0], cx, bY + 17);
-        ctx.fillText(boxLines[1], cx, bY + 31);
-        ctx.font = '10px sans-serif';
-        ctx.fillStyle = '#3b82f6';
-        ctx.fillText(boxLines[2], cx, bY + 46);
-      }
 
       ctx.restore();
     }
@@ -1118,34 +1081,6 @@ function renderRecScurve(canvasId, tw) {
     },
   });
 
-  // Hover listeners: card charts only (modals always show callout)
-  const ch = charts[canvasId];
-  if (ch && !isModal) {
-    if (canvas._recHoverFn)  canvas.removeEventListener('mousemove',  canvas._recHoverFn);
-    if (canvas._recLeaveFn)  canvas.removeEventListener('mouseleave', canvas._recLeaveFn);
-
-    canvas._recHoverFn = (e) => {
-      const rect  = canvas.getBoundingClientRect();
-      const mx    = e.clientX - rect.left;
-      const tgtPx = ch.scales.x?.getPixelForValue(ti);
-      const vis   = tgtPx != null && Math.abs(mx - tgtPx) < 40;
-      if (isResumen) {
-        const was = _rsCalloutVisible;
-        _rsCalloutVisible = vis;
-        if (_rsCalloutVisible !== was) ch.draw();
-      } else {
-        const was = _recCalloutVisible;
-        _recCalloutVisible = vis;
-        if (_recCalloutVisible !== was) ch.draw();
-      }
-    };
-    canvas._recLeaveFn = () => {
-      if (isResumen && _rsCalloutVisible)  { _rsCalloutVisible  = false; ch.draw(); }
-      if (!isResumen && _recCalloutVisible){ _recCalloutVisible = false; ch.draw(); }
-    };
-    canvas.addEventListener('mousemove',  canvas._recHoverFn);
-    canvas.addEventListener('mouseleave', canvas._recLeaveFn);
-  }
 }
 
 // ── S-curve expand modal ─────────────────────────────────────────────────────

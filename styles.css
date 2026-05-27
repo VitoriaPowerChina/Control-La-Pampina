@@ -1750,9 +1750,8 @@ tr:hover td{background:var(--surface-2)}
 .rec-scen-table th{font-size:10px;font-weight:700;text-transform:uppercase;
   letter-spacing:.04em;color:var(--text-muted);padding:6px 8px;
   text-align:left;border-bottom:1px solid var(--border)}
-.rec-scen-table td{padding:8px 8px;border-bottom:1px solid var(--border);
+.rec-scen-table td{padding:8px 8px;border-bottom:none;
   color:var(--text);font-variant-numeric:tabular-nums}
-.rec-scen-table tr:last-child td{border-bottom:none}
 .rec-scen-table tr.rec-scen-hl{background:rgba(37,99,235,.06)}
 .rec-dot{display:inline-block;width:9px;height:9px;border-radius:50%;vertical-align:middle}
 .rec-dot-ok{background:var(--success)}
