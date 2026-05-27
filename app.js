@@ -1258,9 +1258,7 @@ function render() {
   _tryRender(renderCriticasTable, _critSorted);
   _tryRender(renderSinAvanceCharts, D.sinAvance);
   _tryRender(renderSinAvanceTable, D.sinAvance);
-  _tryRender(renderPLLate);
-  _tryRender(renderPLFin);
-  _tryRender(renderPLUp);
+  _tryRender(renderPlazos);
   const _rankNeg = D.ranking.filter(r => r.desvPond < 0);
   const _rankPos = D.ranking.filter(r => r.desvPond > 0).sort((a,b) => b.desvPond - a.desvPond);
   _tryRender(renderRankingBar,      _rankNeg.slice(0, 20));
@@ -3231,7 +3229,7 @@ function populateAreaDropdowns() {
   D.areas.filter(a => a.nivel===3).forEach(a => { areaNames[a.edt] = a.tarea.trim().slice(0,28); });
   const opts = Object.entries(areaNames).sort()
     .map(([k,v]) => `<option value="${k}">${k} — ${v}</option>`).join('');
-  ['desvAreaBox','critAreaBox','sinAreaBox','rankAreaBox','plLateAreaBox','plFinAreaBox','plUpAreaBox'].forEach(id => {
+  ['desvAreaBox','critAreaBox','sinAreaBox','rankAreaBox'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = `<option value="">${t('cr.allAreas')}</option>` + opts;
   });
@@ -3332,15 +3330,10 @@ function setupTabFilters() {
   on('rankNegImpact', 'change', updateRank);
   on('rankPosImpact', 'change', updateRank);
 
-  // Plazos filters
-  on('plLateSearch',  'input',  () => { if (D) renderPLLate(); });
-  on('plLateAreaBox', 'change', () => { if (D) renderPLLate(); });
-  on('plFinSearch',   'input',  () => { if (D) renderPLFin(); });
-  on('plFinAreaBox',  'change', () => { if (D) renderPLFin(); });
-  on('plUpSearch',    'input',  () => { if (D) renderPLUp(); });
-  on('plUpAreaBox',   'change', () => { if (D) renderPLUp(); });
-  on('plUpWeeks',     'input',  () => { if (D) renderPLUp(); });
-  on('plUpWeeks',     'change', () => { if (D) renderPLUp(); });
+  // Plazos accordion filters
+  on('plSearch',  'input',  () => { if (D) renderPlazos(); });
+  on('plUpWeeks', 'input',  () => { if (D) renderPlazos(); });
+  on('plUpWeeks', 'change', () => { if (D) renderPlazos(); });
 }
 
 
@@ -3992,151 +3985,152 @@ function _isoAddDays(iso, days) {
   return d.toISOString().split('T')[0];
 }
 
-// ── Plazos — Iniciadas con Atraso ────────────────────────────────────────────
-function renderPLLate() {
+// ── Plazos — Accordion por área ───────────────────────────────────────────────
+function renderPlazos() {
   if (!D) return;
-  const areaMap  = _buildAreaMap();
-  const cutDate  = D.meta.dataDate;
-  const q        = (document.getElementById('plLateSearch')?.value || '').toLowerCase();
-  const areaFilt = document.getElementById('plLateAreaBox')?.value || '';
-
-  const rows = D.allLeaves.filter(r =>
-    r.inicio && r.inicio <= cutDate &&
-    r.pctCompReal === 0 &&
-    r.incidencia > 0 &&
-    (!q        || r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)) &&
-    (!areaFilt || r.edt.startsWith(areaFilt))
-  ).sort((a, b) => (a.inicio || '').localeCompare(b.inicio || ''));
-
-  const countEl = document.getElementById('plLateCount');
-  if (countEl) countEl.textContent = rows.length;
-
-  const el = document.getElementById('plLateTable');
-  if (!el) return;
-  if (!rows.length) { el.innerHTML = `<p class="plazos-empty">${t('pl.noData')}</p>`; return; }
-
-  el.innerHTML = tableWrap(
-    `<tr>
-      <th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th>
-      <th class="left">${t('th.area')}</th>
-      <th>${t('th.start')}</th><th>${t('th.end')}</th>
-      <th>${t('th.hh')}</th><th>${t('th.incidence')}</th>
-      <th>${t('th.pctCompPlan')}</th><th>${t('pl.daysLate')}</th>
-    </tr>`,
-    rows.map((r, i) => {
-      const days = _dateDiffDays(cutDate, r.inicio);
-      return `<tr>
-        <td>${i+1}</td>
-        <td class="left">${r.tarea.trim()}</td>
-        <td>${r.edt}</td>
-        <td class="left" style="font-size:11px;color:var(--text-muted)">${_areaOfEdt(r.edt, areaMap)}</td>
-        <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
-        <td>${Math.round(r.hh).toLocaleString()}</td>
-        <td>${pct(r.incidencia, 4)}</td>
-        <td>${pct(r.pctCompPlan)}</td>
-        <td class="plazos-days-late">${days}d</td>
-      </tr>`;
-    }).join('')
-  );
-}
-
-// ── Plazos — Pendientes de Terminar ──────────────────────────────────────────
-function renderPLFin() {
-  if (!D) return;
-  const areaMap  = _buildAreaMap();
-  const cutDate  = D.meta.dataDate;
-  const q        = (document.getElementById('plFinSearch')?.value || '').toLowerCase();
-  const areaFilt = document.getElementById('plFinAreaBox')?.value || '';
-
-  const rows = D.allLeaves.filter(r =>
-    r.fin && r.fin <= cutDate &&
-    r.pctCompReal < 0.995 &&
-    r.incidencia > 0 &&
-    (!q        || r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)) &&
-    (!areaFilt || r.edt.startsWith(areaFilt))
-  ).sort((a, b) => (a.fin || '').localeCompare(b.fin || ''));
-
-  const countEl = document.getElementById('plFinCount');
-  if (countEl) countEl.textContent = rows.length;
-
-  const el = document.getElementById('plFinTable');
-  if (!el) return;
-  if (!rows.length) { el.innerHTML = `<p class="plazos-empty">${t('pl.noData')}</p>`; return; }
-
-  el.innerHTML = tableWrap(
-    `<tr>
-      <th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th>
-      <th class="left">${t('th.area')}</th>
-      <th>${t('th.start')}</th><th>${t('th.end')}</th>
-      <th>${t('th.hh')}</th><th>${t('th.incidence')}</th>
-      <th>${t('th.pctCompPlan')}</th><th>${t('th.pctCompReal')}</th>
-      <th>${t('pl.daysOverdue')}</th>
-    </tr>`,
-    rows.map((r, i) => {
-      const days = _dateDiffDays(cutDate, r.fin);
-      return `<tr>
-        <td>${i+1}</td>
-        <td class="left">${r.tarea.trim()}</td>
-        <td>${r.edt}</td>
-        <td class="left" style="font-size:11px;color:var(--text-muted)">${_areaOfEdt(r.edt, areaMap)}</td>
-        <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
-        <td>${Math.round(r.hh).toLocaleString()}</td>
-        <td>${pct(r.incidencia, 4)}</td>
-        <td>${pct(r.pctCompPlan)}</td>
-        <td>${pct(r.pctCompReal)}</td>
-        <td class="plazos-days-overdue">${days}d</td>
-      </tr>`;
-    }).join('')
-  );
-}
-
-// ── Plazos — Próximos Inicios ─────────────────────────────────────────────────
-function renderPLUp() {
-  if (!D) return;
-  const areaMap   = _buildAreaMap();
   const cutDate   = D.meta.dataDate;
   const weeks     = Math.max(1, parseInt(document.getElementById('plUpWeeks')?.value || '4'));
   const futureCut = _isoAddDays(cutDate, weeks * 7);
-  const q         = (document.getElementById('plUpSearch')?.value || '').toLowerCase();
-  const areaFilt  = document.getElementById('plUpAreaBox')?.value || '';
+  const q         = (document.getElementById('plSearch')?.value || '').toLowerCase();
 
-  const rows = D.allLeaves.filter(r =>
-    r.inicio && r.inicio > cutDate && r.inicio <= futureCut &&
-    r.incidencia > 0 &&
-    (!q        || r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)) &&
-    (!areaFilt || r.edt.startsWith(areaFilt))
-  ).sort((a, b) => (a.inicio || '').localeCompare(b.inicio || ''));
+  const areas = D.areas
+    .filter(a => a.nivel === 3 && a.incidencia > 0)
+    .filter(a => !q || a.tarea.toLowerCase().includes(q) || a.edt.toLowerCase().includes(q))
+    .sort((a, b) => a.edt.localeCompare(b.edt));
 
-  const countEl = document.getElementById('plUpCount');
-  if (countEl) countEl.textContent = rows.length;
+  const container = document.getElementById('plazosAccordion');
+  if (!container) return;
 
-  const el = document.getElementById('plUpTable');
-  if (!el) return;
-  if (!rows.length) { el.innerHTML = `<p class="plazos-empty">${t('pl.noData')}</p>`; return; }
+  container.innerHTML = areas.map(area => {
+    const prefix = area.edt + '.';
+    const leaves = D.allLeaves.filter(r => r.edt.startsWith(prefix) || r.edt === area.edt);
 
-  el.innerHTML = tableWrap(
-    `<tr>
-      <th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th>
-      <th class="left">${t('th.area')}</th>
-      <th>${t('th.start')}</th><th>${t('th.end')}</th>
-      <th>${t('th.hh')}</th><th>${t('th.incidence')}</th>
-      <th>${t('th.pctCompPlan')}</th><th>${t('pl.daysToStart')}</th>
-    </tr>`,
+    const notStarted = leaves.filter(r =>
+      r.inicio && r.inicio <= cutDate && r.pctCompReal === 0 && r.incidencia > 0
+    ).sort((a, b) => a.inicio.localeCompare(b.inicio));
+
+    const startedLate = leaves.filter(r =>
+      r.pctCompReal > 0 && r.pctCompReal < 0.995 &&
+      r.inicio && r.inicio <= cutDate &&
+      r.pctCompPlan > r.pctCompReal + 0.005 &&
+      r.incidencia > 0
+    ).sort((a, b) => a.inicio.localeCompare(b.inicio));
+
+    const upcoming = leaves.filter(r =>
+      r.inicio && r.inicio > cutDate && r.inicio <= futureCut && r.incidencia > 0
+    ).sort((a, b) => a.inicio.localeCompare(b.inicio));
+
+    const total = notStarted.length + startedLate.length + upcoming.length;
+
+    return `<div class="pl-card">
+      <div class="pl-card-hdr" onclick="togglePlCard(this)">
+        <i class="bi bi-chevron-right pl-chevron"></i>
+        <span class="pl-card-edt">${area.edt}</span>
+        <span class="pl-card-name">${area.tarea.trim()}</span>
+        <div class="pl-card-badges">
+          ${notStarted.length  ? `<span class="pl-badge pl-badge-late">${notStarted.length} no iniciadas</span>`  : ''}
+          ${startedLate.length ? `<span class="pl-badge pl-badge-behind">${startedLate.length} c/ atraso</span>`  : ''}
+          ${upcoming.length    ? `<span class="pl-badge pl-badge-up">${upcoming.length} próximas</span>`           : ''}
+          ${total === 0        ? `<span class="pl-badge pl-badge-ok">✓ Sin alertas</span>`                         : ''}
+        </div>
+      </div>
+      <div class="pl-card-body" style="display:none">
+        ${_buildPlBody(notStarted, startedLate, upcoming, cutDate)}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _buildPlBody(notStarted, startedLate, upcoming, cutDate) {
+  const parts = [];
+
+  if (notStarted.length) {
+    parts.push(`<div class="pl-sub pl-sub-late">
+      <div class="pl-sub-hdr"><i class="bi bi-clock-history"></i> ${t('pl.lateTitle')} (${notStarted.length})</div>
+      ${_plTable(notStarted, 'notStarted', cutDate)}
+    </div>`);
+  }
+  if (startedLate.length) {
+    parts.push(`<div class="pl-sub pl-sub-behind">
+      <div class="pl-sub-hdr"><i class="bi bi-exclamation-triangle"></i> ${t('pl.behindTitle')} (${startedLate.length})</div>
+      ${_plTable(startedLate, 'behind', cutDate)}
+    </div>`);
+  }
+  if (upcoming.length) {
+    parts.push(`<div class="pl-sub pl-sub-up">
+      <div class="pl-sub-hdr"><i class="bi bi-calendar-check"></i> ${t('pl.upTitle')} (${upcoming.length})</div>
+      ${_plTable(upcoming, 'upcoming', cutDate)}
+    </div>`);
+  }
+  return parts.join('') || `<p class="plazos-empty">✓ ${t('pl.noAlerts')}</p>`;
+}
+
+function _plTable(rows, type, cutDate) {
+  const numH = `<th>${t('th.num')}</th>`;
+  const actH = `<th class="left">${t('th.activity')}</th>`;
+  const edtH = `<th>${t('th.edt')}</th>`;
+  const iniH = `<th>${t('th.start')}</th>`;
+  const finH = `<th>${t('th.end')}</th>`;
+  const hhH  = `<th>${t('th.hh')}</th>`;
+  const ppH  = `<th>${t('th.pctCompPlan')}</th>`;
+  const prH  = `<th>${t('th.pctCompReal')}</th>`;
+
+  if (type === 'notStarted') {
+    return tableWrap(
+      `<tr>${numH}${actH}${edtH}${iniH}${finH}${hhH}${ppH}<th>${t('pl.daysLate')}</th></tr>`,
+      rows.map((r, i) => {
+        const days = _dateDiffDays(cutDate, r.inicio);
+        return `<tr>
+          <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
+          <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
+          <td>${Math.round(r.hh).toLocaleString()}</td>
+          <td>${pct(r.pctCompPlan)}</td>
+          <td class="plazos-days-late">${days}d</td>
+        </tr>`;
+      }).join('')
+    );
+  }
+  if (type === 'behind') {
+    return tableWrap(
+      `<tr>${numH}${actH}${edtH}${iniH}${finH}${hhH}${ppH}${prH}<th>${t('pl.deviation')}</th></tr>`,
+      rows.map((r, i) => {
+        const overdue = r.fin && r.fin <= cutDate;
+        return `<tr${overdue ? ' class="pl-row-overdue"' : ''}>
+          <td>${i+1}</td>
+          <td class="left">${r.tarea.trim()}${overdue ? ` <span class="pl-overdue-tag">${t('pl.overdueTag')}</span>` : ''}</td>
+          <td>${r.edt}</td>
+          <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
+          <td>${Math.round(r.hh).toLocaleString()}</td>
+          <td>${pct(r.pctCompPlan)}</td>
+          <td>${pct(r.pctCompReal)}</td>
+          <td class="plazos-days-late">${signPct(r.desviacion)}</td>
+        </tr>`;
+      }).join('')
+    );
+  }
+  // upcoming
+  return tableWrap(
+    `<tr>${numH}${actH}${edtH}${iniH}${finH}${hhH}${ppH}<th>${t('pl.daysToStart')}</th></tr>`,
     rows.map((r, i) => {
       const days = _dateDiffDays(r.inicio, cutDate);
       return `<tr>
-        <td>${i+1}</td>
-        <td class="left">${r.tarea.trim()}</td>
-        <td>${r.edt}</td>
-        <td class="left" style="font-size:11px;color:var(--text-muted)">${_areaOfEdt(r.edt, areaMap)}</td>
+        <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
         <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
         <td>${Math.round(r.hh).toLocaleString()}</td>
-        <td>${pct(r.incidencia, 4)}</td>
         <td>${pct(r.pctCompPlan)}</td>
         <td class="plazos-days-upcoming">${days}d</td>
       </tr>`;
     }).join('')
   );
+}
+
+function togglePlCard(hdr) {
+  const body    = hdr.nextElementSibling;
+  const chevron = hdr.querySelector('.pl-chevron');
+  const isOpen  = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  chevron.classList.toggle('bi-chevron-right', isOpen);
+  chevron.classList.toggle('bi-chevron-down',  !isOpen);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
