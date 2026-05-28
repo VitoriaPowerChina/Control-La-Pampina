@@ -753,8 +753,8 @@ tr:hover td{background:var(--surface-2)}
 [data-theme="dark"] .badge-crit      {background:#450a0a;color:#fca5a5}
 
 /* ── Desvio ─────────────────────────────────────────────────────────── */
-.dev-neg    {color:var(--danger); font-weight:700}
-.dev-pos    {color:var(--success);font-weight:700}
+.dev-neg    {color:var(--danger)  !important; font-weight:700}
+.dev-pos    {color:var(--success) !important; font-weight:700}
 .dev-neutral{color:var(--text-muted)}
 
 /* ── Progress bars ──────────────────────────────────────────────────── */
@@ -1022,6 +1022,26 @@ tr:hover td{background:var(--surface-2)}
   transition:color var(--t);
 }
 .tree-toggle:hover{color:var(--primary-d)}
+
+.tree-expand-pb{
+  background:none;border:none;cursor:pointer;
+  color:var(--primary);font-size:10px;
+  padding:0;width:20px;text-align:center;line-height:1;
+  flex-shrink:0;
+  transition:transform .18s, color var(--t);
+}
+.tree-expand-pb:hover{color:var(--primary-d)}
+.tree-expand-pb.open{transform:rotate(90deg)}
+
+/* PB individual detail rows in WBS */
+.arbol-pb-detail{display:none}
+.arbol-pb-detail.arbol-pb-detail-visible{display:table-row}
+.arbol-pb-detail td{
+  font-size:11px;padding:4px 8px;
+  background:var(--surface-2);
+  border-bottom:1px dashed var(--border);
+  color:var(--text);
+}
 
 .tree-no-toggle{display:inline-block;width:20px;flex-shrink:0}
 

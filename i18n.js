@@ -238,7 +238,7 @@ es: {
   'th.pctActualCur':  '% Real actual',
   'th.pctRecoverable':'% Recuperable',
   'th.situation':     'Situación',
-  'th.desvPP':        'Desvío (p.p.)',
+  'th.desvPP':        '% DESV.',
   'th.trend':         'Tendencia',
   'th.impact':        'Impacto (p.p.)',
   'th.area':          'Área',
@@ -351,6 +351,11 @@ es: {
   'pl.noData':         'No hay actividades en esta categoría.',
   'pl.noAlerts':       'Sin alertas en esta área',
   'pl.overdueTag':     'VENCIDA',
+  'pl.filterAll':       'Todas',
+  'pl.filterNotStarted':'No iniciadas',
+  'pl.filterBehind':    'Con atraso',
+  'pl.filterUpcoming':  'Próximas',
+  'pl.filterOk':        'Sin alertas',
 },
 
 /* ═══════════════════════════════════════  ENGLISH  ═══════════════════════════ */
@@ -588,7 +593,7 @@ en: {
   'th.pctActualCur':  'Current Actual %',
   'th.pctRecoverable':'% Recoverable',
   'th.situation':     'Situation',
-  'th.desvPP':        'Deviation (p.p.)',
+  'th.desvPP':        '% DESV.',
   'th.trend':         'Trend',
   'th.impact':        'Impact (p.p.)',
   'th.area':          'Area',
@@ -698,6 +703,11 @@ en: {
   'pl.noData':         'No activities in this category.',
   'pl.noAlerts':       'No alerts in this area',
   'pl.overdueTag':     'OVERDUE',
+  'pl.filterAll':       'All',
+  'pl.filterNotStarted':'Not Started',
+  'pl.filterBehind':    'Behind',
+  'pl.filterUpcoming':  'Upcoming',
+  'pl.filterOk':        'No Alerts',
 },
 
 /* ═══════════════════════════════════════  中文  ═══════════════════════════════ */
@@ -935,7 +945,7 @@ zh: {
   'th.pctActualCur':  '当前实际%',
   'th.pctRecoverable':'可恢复%',
   'th.situation':     '状态',
-  'th.desvPP':        '偏差（百分点）',
+  'th.desvPP':        '% DESV.',
   'th.trend':         '趋势',
   'th.impact':        '影响（百分点）',
   'th.area':          '区域',
@@ -1045,6 +1055,11 @@ zh: {
   'pl.noData':         '此类别中没有活动。',
   'pl.noAlerts':       '此区域无预警',
   'pl.overdueTag':     '逾期',
+  'pl.filterAll':       '全部',
+  'pl.filterNotStarted':'未开始',
+  'pl.filterBehind':    '有延迟',
+  'pl.filterUpcoming':  '即将开始',
+  'pl.filterOk':        '无预警',
 }
 
 }; // end I18N

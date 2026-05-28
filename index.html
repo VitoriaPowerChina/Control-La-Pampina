@@ -7,8 +7,8 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=5.1">
-  <script src="i18n.js?v=1.7"></script>
+  <link rel="stylesheet" href="styles.css?v=5.4">
+  <script src="i18n.js?v=2.0"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -410,6 +410,13 @@
         <h2 data-i18n="pl.title">Seguimiento de Plazos</h2>
         <div class="filters">
           <input id="plSearch" type="search" data-i18n-ph="pl.searchArea" placeholder="Buscar área…">
+          <select id="plStatusFilter" class="filter-select">
+            <option value="all"         data-i18n="pl.filterAll">Todas</option>
+            <option value="notStarted"  data-i18n="pl.filterNotStarted">No iniciadas</option>
+            <option value="behind"      data-i18n="pl.filterBehind">Con atraso</option>
+            <option value="upcoming"    data-i18n="pl.filterUpcoming">Próximas</option>
+            <option value="ok"          data-i18n="pl.filterOk">Sin alertas</option>
+          </select>
           <label class="plazos-weeks-lbl">
             <span data-i18n="pl.weeksLbl">Próximas semanas:</span>
             <input id="plUpWeeks" type="number" min="1" max="52" value="4" class="plazos-weeks-inp">
@@ -517,17 +524,19 @@
               <th class="left" style="min-width:170px" data-i18n="th.edt">EDT</th>
               <th class="left" style="min-width:220px" data-i18n="th.activity">Actividad</th>
               <th data-i18n="th.hh">H-H</th>
-              <th data-i18n="th.incidence">Incid.</th>
               <th>PBs</th>
               <th>PB Plan.</th>
               <th>PB Av.</th>
               <th>PB Dev.</th>
+              <th data-i18n="th.incidence">Incid.</th>
               <th>INCD.PLAN</th>
               <th>INCD.REAL</th>
+              <th title="Incidência ponderada × desvío">INCID. DESVÍO</th>
               <th data-i18n="th.pctPlan">% Plan</th>
               <th data-i18n="th.pctActual">% Real</th>
-              <th data-i18n="th.deviation">Desvío</th>
+              <th title="Desvío porcentual">% DESV.</th>
               <th data-i18n="th.status">Status</th>
+              <th title="Barras de progresso plan vs real">Progreso</th>
             </tr>
           </thead>
           <tbody id="arbolBody"></tbody>
@@ -965,6 +974,6 @@
   </div>
 </div>
 
-<script src="app.js?v=6.6"></script>
+<script src="app.js?v=7.8"></script>
 </body>
 </html>

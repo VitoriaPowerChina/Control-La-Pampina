@@ -5,6 +5,7 @@
 let D = null;
 let charts = {};
 const collapsedNodes    = new Set();
+const expandedPbNodes   = new Set(); // consolidated leaves with PBs expanded in WBS
 let _wbsFilterEdt     = ''; // EDT selecionado na cascata WBS; '' = sem filtro
 let _scurveFilterEdt  = ''; // EDT selecionado no filtro da Curva S filtrada
 let _consCache = null;
@@ -1343,8 +1344,10 @@ function renderDesviosPorAreas() {
   areaData.sort((a, b) => a.impacto - b.impacto);
 
   // ── Ranking table ──────────────────────────────────────────────────────────
-  const totalImpacto = areaData.reduce((s, d) => s + d.impacto, 0);
-  const totalDesvPP2 = totalRow ? (totalRow.pctCompReal - totalRow.pctCompPlan) * 100 : 0;
+  const totalImpacto    = areaData.reduce((s, d) => s + d.impacto, 0);
+  const totalDesvPP2    = totalRow ? (totalRow.pctCompReal - totalRow.pctCompPlan) * 100 : 0;
+  const totalIncidPlan  = areaData.reduce((s, d) => s + d.area.incidencia * d.area.pctCompPlan, 0) * 100;
+  const totalIncidReal  = areaData.reduce((s, d) => s + d.area.incidencia * d.area.pctCompReal, 0) * 100;
 
   const trendHtml = (trend) => {
     if (trend === 'up')   return '<span class="dv-trend-up">&#8599;</span>';
@@ -1352,26 +1355,41 @@ function renderDesviosPorAreas() {
     return '<span class="dv-trend-neu">→</span>';
   };
 
-  const tableRows = areaData.map(d => `<tr>
+  const tableRows = areaData.map(d => {
+    const incidPlan    = d.area.incidencia * d.area.pctCompPlan * 100;
+    const incidReal    = d.area.incidencia * d.area.pctCompReal * 100;
+    const realCls      = devClass(d.area.pctCompReal - d.area.pctCompPlan);
+    const incidRealCls = devClass(incidReal - incidPlan);
+    const impCls       = devClass(d.impacto);
+    const desvCls      = devClass(d.desvPP);
+    return `<tr>
     <td class="left" style="max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${d.area.tarea.trim()}">${d.area.tarea.trim()}</td>
     <td>${(d.area.pctCompPlan * 100).toFixed(1)}%</td>
-    <td>${(d.area.pctCompReal * 100).toFixed(1)}%</td>
-    <td class="${d.desvPP < 0 ? 'dev-neg' : d.desvPP > 0 ? 'dev-pos' : 'dev-neutral'}">${(d.desvPP >= 0 ? '+' : '') + d.desvPP.toFixed(2)}</td>
-    <td>${(d.area.incidencia * 100).toFixed(2)}%</td>
-    <td class="${d.impacto < 0 ? 'dev-neg' : d.impacto > 0 ? 'dev-pos' : 'dev-neutral'}">${(d.impacto >= 0 ? '+' : '') + d.impacto.toFixed(3)}</td>
+    <td class="${realCls}">${(d.area.pctCompReal * 100).toFixed(1)}%</td>
+    <td class="${desvCls}">${(d.desvPP >= 0 ? '+' : '') + d.desvPP.toFixed(2)}%</td>
+    <td>${(d.area.incidencia * 100).toFixed(3)}%</td>
+    <td>${incidPlan.toFixed(3)}%</td>
+    <td class="${incidRealCls}">${incidReal.toFixed(3)}%</td>
+    <td class="${impCls}">${(d.impacto >= 0 ? '+' : '') + d.impacto.toFixed(3)}%</td>
     <td>${trendHtml(d.trend)}</td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 
   const totalRow2Cls = totalDesvPP2 < 0 ? 'dev-neg' : totalDesvPP2 > 0 ? 'dev-pos' : 'dev-neutral';
   const totalImpCls  = totalImpacto < 0 ? 'dev-neg' : totalImpacto > 0 ? 'dev-pos' : 'dev-neutral';
 
+  const totalRealCls     = totalRow ? devClass(totalRow.pctCompReal - totalRow.pctCompPlan) : 'dev-neutral';
+  const totalIncidRealCls = devClass(totalIncidReal - totalIncidPlan);
+
   const totalHtml = `<tr class="dv-total-row">
     <td class="left"><strong>${t('dv.total')}</strong></td>
     <td><strong>${totalRow ? (totalRow.pctCompPlan * 100).toFixed(1) + '%' : '—'}</strong></td>
-    <td><strong>${totalRow ? (totalRow.pctCompReal * 100).toFixed(1) + '%' : '—'}</strong></td>
-    <td class="${totalRow2Cls}"><strong>${(totalDesvPP2 >= 0 ? '+' : '') + totalDesvPP2.toFixed(2)}</strong></td>
+    <td class="${totalRealCls}"><strong>${totalRow ? (totalRow.pctCompReal * 100).toFixed(1) + '%' : '—'}</strong></td>
+    <td class="${totalRow2Cls}"><strong>${(totalDesvPP2 >= 0 ? '+' : '') + totalDesvPP2.toFixed(2)}%</strong></td>
     <td>—</td>
-    <td class="${totalImpCls}"><strong>${(totalImpacto >= 0 ? '+' : '') + totalImpacto.toFixed(3)}</strong></td>
+    <td><strong>${totalIncidPlan.toFixed(3)}%</strong></td>
+    <td class="${totalIncidRealCls}"><strong>${totalIncidReal.toFixed(3)}%</strong></td>
+    <td class="${totalImpCls}"><strong>${(totalImpacto >= 0 ? '+' : '') + totalImpacto.toFixed(3)}%</strong></td>
     <td>—</td>
   </tr>`;
 
@@ -1382,9 +1400,11 @@ function renderDesviosPorAreas() {
         <th class="left">${t('th.area')}</th>
         <th>${t('th.pctPlan')}</th>
         <th>${t('th.pctActual')}</th>
-        <th>${t('th.desvPP')}</th>
-        <th>${t('th.incidence')}</th>
-        <th>${t('th.impact')}</th>
+        <th>% Desvío</th>
+        <th>Incid Total</th>
+        <th>Incid Plan</th>
+        <th>Incid Real</th>
+        <th>Incid Desvío</th>
         <th>${t('th.trend')}</th>
       </tr>`,
       tableRows + totalHtml
@@ -2362,18 +2382,33 @@ function renderCriticasTable(rows) {
   if (!criticasTableEl) return;
   const areaMap = _buildAreaMap();
   criticasTableEl.innerHTML = tableWrap(
-    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th>
-     <th class="left">${t('th.area')}</th>
-     <th>${t('th.start')}</th><th>${t('th.end')}</th>
-     <th>${t('th.hh')}</th><th>${t('th.incidence')}</th><th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>${t('th.deviation')}</th><th>${t('th.impactPond')}</th></tr>`,
-    rows.map((r,i) => `<tr>
-      <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
-      <td class="left" style="font-size:11px;color:var(--text-muted)">${_areaOfEdt(r.edt, areaMap)}</td>
-      <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
-      <td>${Math.round(r.hh).toLocaleString()}</td><td>${pct(r.incidencia,4)}</td>
-      <td>${pct(r.pctCompPlan)}</td><td>${pct(r.pctCompReal)}</td>
-      <td class="dev-neg">${signPct(r.desviacion)}</td><td class="dev-neg">${signPct(r.desvPond)}</td>
-    </tr>`).join('')
+    `<tr>
+      <th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th>
+      <th class="left">${t('th.area')}</th>
+      <th>${t('th.start')}</th><th>${t('th.end')}</th>
+      <th>${t('th.hh')}</th>
+      <th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>% Desvío</th>
+      <th>Incid Total</th><th>Incid Plan</th><th>Incid Real</th><th>Incid Desvío</th>
+    </tr>`,
+    rows.map((r, i) => {
+      const incidPlan    = r.incidencia * r.pctCompPlan;
+      const incidReal    = r.incidencia * r.pctCompReal;
+      const realCls      = devClass(r.pctCompReal - r.pctCompPlan);
+      const incidRealCls = devClass(incidReal - incidPlan);
+      return `<tr>
+        <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
+        <td class="left" style="font-size:11px;color:var(--text-muted)">${_areaOfEdt(r.edt, areaMap)}</td>
+        <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
+        <td>${Math.round(r.hh).toLocaleString()}</td>
+        <td>${pct(r.pctCompPlan)}</td>
+        <td class="${realCls}">${pct(r.pctCompReal)}</td>
+        <td class="${devClass(r.desviacion)}">${signPct(r.desviacion)}</td>
+        <td>${pct(r.incidencia,4)}</td>
+        <td>${pct(incidPlan,4)}</td>
+        <td class="${incidRealCls}">${pct(incidReal,4)}</td>
+        <td class="${devClass(r.desvPond)}">${signPct(r.desvPond)}</td>
+      </tr>`;
+    }).join('')
   );
 }
 
@@ -2423,18 +2458,46 @@ function renderSinAvanceCharts(rows) {
 function renderSinAvanceTable(rows) {
   const sinAvanceTableEl = document.getElementById('sinAvanceTable');
   if (!sinAvanceTableEl) return;
-  const sort = document.getElementById('sinSort')?.value || 'incidencia';
-  const incHdr = `${t('th.incidence')}${sort === 'incidencia' ? ' ▼' : ''}`;
+  const sort   = document.getElementById('sinSort')?.value || 'incidencia';
+  const incHdr = `Incid Total${sort === 'incidencia' ? ' ▼' : ''}`;
   const plnHdr = `${t('th.pctPlan')}${sort === 'pctPlan' ? ' ▼' : ''}`;
+  // pre-compute per-row values and totals
+  const computed = rows.map(r => {
+    const incidPlan = r.incidencia * r.pctCompPlan;
+    const incidDesv = -incidPlan;                   // real=0 → desvio = 0 - plan
+    return { r, incidPlan, incidDesv };
+  });
+  const totalIncidPlan = computed.reduce((s, c) => s + c.incidPlan, 0);
+  const totalIncidDesv = computed.reduce((s, c) => s + c.incidDesv, 0);
+
+  const bodyRows = computed.map(({ r, incidPlan, incidDesv }, i) => `<tr>
+        <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
+        <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
+        <td>${Math.round(r.hh).toLocaleString()}</td>
+        <td>${pct(r.pctCompPlan)}</td>
+        <td class="dev-neg">0.0%</td>
+        <td class="dev-neg">${signPct(-r.pctCompPlan)}</td>
+        <td>${pct(r.incidencia, 4)}</td>
+        <td>${pct(incidPlan, 4)}</td>
+        <td class="dev-neg">0.000%</td>
+        <td class="dev-neg">${signPct(incidDesv, 4)}</td>
+      </tr>`).join('');
+
+  const totalRow = `<tr class="dv-total-row">
+        <td colspan="10" class="left"><strong>${t('dv.total')}</strong></td>
+        <td><strong>${pct(totalIncidPlan, 4)}</strong></td>
+        <td class="dev-neg"><strong>0.000%</strong></td>
+        <td class="dev-neg"><strong>${signPct(totalIncidDesv, 4)}</strong></td>
+      </tr>`;
+
   sinAvanceTableEl.innerHTML = tableWrap(
-    `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.start')}</th><th>${t('th.end')}</th>
-     <th>${t('th.hh')}</th><th>${incHdr}</th><th>${plnHdr}</th><th>${t('th.pctActual')}</th></tr>`,
-    rows.map((r,i) => `<tr>
-      <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
-      <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
-      <td>${Math.round(r.hh).toLocaleString()}</td><td>${pct(r.incidencia,2)}</td>
-      <td>${pct(r.pctCompPlan)}</td><td class="dev-neg">0.0%</td>
-    </tr>`).join('')
+    `<tr>
+      <th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th>
+      <th>${t('th.start')}</th><th>${t('th.end')}</th><th>${t('th.hh')}</th>
+      <th>${plnHdr}</th><th>${t('th.pctActual')}</th><th>% Desvío</th>
+      <th>${incHdr}</th><th>Incid Plan</th><th>Incid Real</th><th>Incid Desvío</th>
+    </tr>`,
+    bodyRows + totalRow
   );
 }
 
@@ -2722,12 +2785,14 @@ function renderConsolidadoTable(rows) {
     <th title="PB donde el avance planificado al corte es &gt; 0">PB planif.</th>
     <th title="PB donde el avance real es &gt; 0">PB c/avance</th>
     <th title="PB donde el avance real es menor al planificado">PB c/desvío</th>
-    <th title="Suma de incidencias de todos los PB del grupo">Peso total</th>
-    <th title="Σ incidencia × plan — peso del avance planificado">Peso plan.</th>
-    <th title="Σ incidencia × real — peso del avance real">Peso real</th>
-    <th title="Promedio ponderado del avance planificado">Plan consol.</th>
-    <th title="Promedio ponderado del avance real">Real consol.</th>
-    <th title="Real consolidado − Plan consolidado">Gap</th>
+    <th title="Suma de incidencias de todos los PB del grupo">Incid. total</th>
+    <th title="Σ incidencia × plan — peso del avance planificado">Incid. plan.</th>
+    <th title="Σ incidencia × real — peso del avance real">Incid. real</th>
+    <th title="Incid. real − Incid. plan. (desvío ponderado)">Incid. desvío</th>
+    <th title="Promedio ponderado del avance planificado">% Plan</th>
+    <th title="Promedio ponderado del avance real">% Real</th>
+    <th title="Barras de progreso plan vs real">Progreso</th>
+    <th title="% Real − % Plan (desvío porcentual consolidado)">% Desv.</th>
   </tr>`;
 
   let tbody = '';
@@ -2752,8 +2817,13 @@ function renderConsolidadoTable(rows) {
       <td>${pct(g.incTotal, 3)}</td>
       <td>${pct(g.pesoPlan, 3)}</td>
       <td>${pct(g.pesoReal, 3)}</td>
+      <td class="${devClass(g.pesoReal - g.pesoPlan)}"><strong>${signPct(g.pesoReal - g.pesoPlan, 3)}</strong></td>
       <td>${pct(g.planConsol)}</td>
       <td>${pct(g.realConsol)}</td>
+      <td><div class="cons-leaf-bars">
+        <div class="cons-leaf-bar" style="width:${(g.planConsol*100).toFixed(1)}%;background:var(--primary)" title="Plan ${(g.planConsol*100).toFixed(1)}%"></div>
+        <div class="cons-leaf-bar" style="width:${(g.realConsol*100).toFixed(1)}%;background:${g.gap < -0.001 ? 'var(--danger)' : 'var(--success)'}" title="Real ${(g.realConsol*100).toFixed(1)}%"></div>
+      </div></td>
       <td class="${gapCls}"><strong>${signPct(g.gap)}</strong></td>
     </tr>`;
 
@@ -2779,8 +2849,10 @@ function renderConsolidadoTable(rows) {
         <td>${pct(leaf.incidencia, 3)}</td>
         <td>${pct(leaf.incidencia * leaf.pctCompPlan, 3)}</td>
         <td>${pct(leaf.incidencia * leaf.pctCompReal, 3)}</td>
-        <td>${bars} <span style="font-size:10px">${planW}%</span></td>
+        <td class="${leafCls}"><strong>${signPct(leaf.incidencia * leafGap, 3)}</strong></td>
+        <td>${planW}%</td>
         <td>${realW}%</td>
+        <td>${bars}</td>
         <td class="${leafCls}"><strong>${signPct(leafGap)}</strong></td>
       </tr>`;
     });
@@ -2853,6 +2925,8 @@ function buildConsolTree() {
       pbDev:    g.pbDev,
       pesoPlan: g.pesoPlan,
       pesoReal: g.pesoReal,
+      leaves:   g.leaves,
+      pbIdx:    g.pbIdx,
     };
   }
 
@@ -2979,6 +3053,17 @@ function isArbolHidden(edt) {
   return false;
 }
 
+/** Thin two-bar visual (plan=blue, real=green/red) matching Consolidado style */
+function _progBars(plan, real, desvio) {
+  const pw = (plan * 100).toFixed(1);
+  const rw = (real * 100).toFixed(1);
+  const rc = desvio < -0.00001 ? 'var(--danger)' : 'var(--success)';
+  return `<div class="cons-leaf-bars">` +
+    `<div class="cons-leaf-bar" style="width:${pw}%;background:var(--primary)" title="Plan ${pw}%"></div>` +
+    `<div class="cons-leaf-bar" style="width:${rw}%;background:${rc}" title="Real ${rw}%"></div>` +
+    `</div>`;
+}
+
 function buildArbolRow(r, edtsWithChildren, hidden) {
   const lvl     = r.nivel || 1;
   const indent  = Math.max(0, lvl - 1) * 16;
@@ -2996,14 +3081,19 @@ function buildArbolRow(r, edtsWithChildren, hidden) {
 
   // ── Consolidated leaf ────────────────────────────────────────────────────────
   if (r.isConsolidated) {
-    const devCls   = devClass(r.desviacion);
-    const pbDevCls = r.pbDev > 0 ? 'dev-neg' : 'dev-neutral';
-    const hhVal    = r.hh > 0 ? Math.round(r.hh).toLocaleString() : '—';
-    return `<tr class="tree-row tree-leaf tree-consol ${lvlCls}${hidCls}" data-edt="${r.edt}" data-rowtype="consolidada">
+    const devCls    = devClass(r.desviacion);
+    const pbDevCls  = r.pbDev > 0 ? 'dev-neg' : 'dev-neutral';
+    const hhVal     = r.hh > 0 ? Math.round(r.hh).toLocaleString() : '—';
+    const hasLeaves = r.leaves?.length > 0;
+    const isExp     = hasLeaves && expandedPbNodes.has(r.edt);
+    const expandBtn = hasLeaves
+      ? `<button class="tree-expand-pb${isExp ? ' open' : ''}" data-edt="${r.edt}" title="Ver PBs individuales">▶</button>`
+      : `<span class="tree-no-toggle"></span>`;
+    const mainRow = `<tr class="tree-row tree-leaf tree-consol ${lvlCls}${hidCls}" data-edt="${r.edt}" data-rowtype="consolidada">
       <td class="left">
         <div class="tree-edt-cell">
           <span class="tree-indent" style="width:${indent}px"></span>
-          <span class="tree-no-toggle"></span>
+          ${expandBtn}
           <span class="tree-consol-dot">●</span>
         </div>
       </td>
@@ -3016,11 +3106,49 @@ function buildArbolRow(r, edtsWithChildren, hidden) {
       <td>${pct(r.incidencia,3)}</td>
       <td class="incd-plan">${pct(r.pesoPlan,3)}</td>
       <td class="incd-real">${pct(r.pesoReal,3)}</td>
+      <td class="${devClass(r.pesoReal - r.pesoPlan)}">${signPct(r.pesoReal - r.pesoPlan, 3)}</td>
       <td>${pct(r.pctCompPlan)}</td>
       <td>${pct(r.pctCompReal)}</td>
       <td class="${devCls}">${signPct(r.desviacion)}</td>
       <td>${statusBadge(r)}</td>
+      <td>${_progBars(r.pctCompPlan, r.pctCompReal, r.desviacion)}</td>
     </tr>`;
+    if (!hasLeaves) return mainRow;
+    const detailRows = r.leaves.map(leaf => {
+      const leafGap = leaf.pctCompReal - leaf.pctCompPlan;
+      const leafCls = devClass(leafGap);
+      const pbNum   = r.pbIdx != null ? (leaf.edt.split('.')[r.pbIdx] || '?') : '?';
+      const planW   = (leaf.pctCompPlan * 100).toFixed(1);
+      const realW   = (leaf.pctCompReal * 100).toFixed(1);
+      const realClr = leafGap < -0.00001 ? 'var(--danger)' : 'var(--success)';
+      const bars    = `<div class="cons-leaf-bars">
+        <div class="cons-leaf-bar" style="width:${planW}%;background:var(--primary)" title="Plan ${planW}%"></div>
+        <div class="cons-leaf-bar" style="width:${realW}%;background:${realClr}" title="Real ${realW}%"></div>
+      </div>`;
+      const visClass = isExp ? ' arbol-pb-detail-visible' : '';
+      return `<tr class="arbol-pb-detail${visClass}${hidCls}" data-pb-parent="${r.edt}">
+        <td class="left">
+          <div class="tree-edt-cell">
+            <span class="tree-indent" style="width:${indent + 20}px"></span>
+            <span class="tree-no-toggle"></span>
+            <span class="cons-pb-tag">PB ${pbNum}</span>
+          </div>
+        </td>
+        <td class="left"><span class="cons-edt-lbl">${leaf.edt}</span></td>
+        <td>—</td>
+        <td>—</td><td>—</td><td>—</td><td>—</td>
+        <td>${pct(leaf.incidencia,3)}</td>
+        <td>${pct(leaf.incidencia * leaf.pctCompPlan,3)}</td>
+        <td>${pct(leaf.incidencia * leaf.pctCompReal,3)}</td>
+        <td class="${leafCls}"><strong>${signPct(leaf.incidencia * leafGap, 3)}</strong></td>
+        <td>${planW}%</td>
+        <td>${realW}%</td>
+        <td class="${leafCls}"><strong>${signPct(leafGap)}</strong></td>
+        <td>${statusBadge(leaf)}</td>
+        <td>${bars}</td>
+      </tr>`;
+    }).join('');
+    return mainRow + detailRows;
   }
 
   // ── Virtual discipline node (PV consolidated discipline — isVirtual) ──────────
@@ -3045,20 +3173,25 @@ function buildArbolRow(r, edtsWithChildren, hidden) {
       <td>${pct(r.incidencia,3)}</td>
       <td class="incd-plan">${pct(r.pesoPlan,3)}</td>
       <td class="incd-real">${pct(r.pesoReal,3)}</td>
+      <td class="${devClass(r.pesoReal - r.pesoPlan)}">${signPct(r.pesoReal - r.pesoPlan, 3)}</td>
       <td>${pct(r.pctCompPlan)}</td>
       <td>${pct(r.pctCompReal)}</td>
       <td class="${devCls}">${signPct(r.desviacion)}</td>
       <td>${statusBadge(r)}</td>
+      <td>${_progBars(r.pctCompPlan, r.pctCompReal, r.desviacion)}</td>
     </tr>`;
   }
 
   // ── Regular record ───────────────────────────────────────────────────────────
   const isSum   = r.resumen;
   const typeCls = isSum ? 'tree-summary' : 'tree-leaf';
-  const devCls  = devClass(r.desviacion);
-  const hh      = r.hh > 0 ? Math.round(r.hh).toLocaleString() : '—';
-  const incid   = r.incidencia > 0 ? pct(r.incidencia, 3) : '—';
-  const devVal  = r.incidencia > 0.0001 ? signPct(r.desviacion) : '—';
+  const devCls      = devClass(r.desviacion);
+  const hh          = r.hh > 0 ? Math.round(r.hh).toLocaleString() : '—';
+  const incid       = r.incidencia > 0 ? pct(r.incidencia, 3) : '—';
+  const devVal      = r.incidencia > 0.0001 ? signPct(r.desviacion) : '—';
+  const incidDesv   = r.incidencia > 0.0001 ? r.incidencia * r.desviacion : null;
+  const incidDesvCls = devClass(incidDesv);
+  const incidDesvVal = incidDesv != null ? signPct(incidDesv, 3) : '—';
 
   const hasPB      = r.pbTotal != null;
   const pbDevCls2  = hasPB && r.pbDev > 0 ? 'dev-neg' : '';
@@ -3079,10 +3212,12 @@ function buildArbolRow(r, edtsWithChildren, hidden) {
     <td>${incid}</td>
     <td class="incd-plan">${incdPlan}</td>
     <td class="incd-real">${incdReal}</td>
+    <td class="${incidDesvCls}">${incidDesvVal}</td>
     <td>${pct(r.pctCompPlan)}</td>
     <td>${pct(r.pctCompReal)}</td>
     <td class="${devCls}">${devVal}</td>
     <td>${statusBadge(r)}</td>
+    <td>${r.incidencia > 0.0001 ? _progBars(r.pctCompPlan, r.pctCompReal, r.desviacion) : '—'}</td>
   </tr>`;
 }
 
@@ -3194,12 +3329,26 @@ function setupArbol() {
   });
   // Event delegation — survives innerHTML rebuilds
   document.getElementById('arbolBody')?.addEventListener('click', e => {
-    const btn = e.target.closest('.tree-toggle');
-    if (!btn || !D) return;
-    const edt = btn.dataset.edt;
-    if (collapsedNodes.has(edt)) collapsedNodes.delete(edt);
-    else                          collapsedNodes.add(edt);
-    renderArbol(document.getElementById('arbolSearch')?.value || '');
+    if (!D) return;
+    // ── WBS hierarchy toggle ───────────────────────────────────────────────
+    const treeBtn = e.target.closest('.tree-toggle');
+    if (treeBtn) {
+      const edt = treeBtn.dataset.edt;
+      if (collapsedNodes.has(edt)) collapsedNodes.delete(edt);
+      else                          collapsedNodes.add(edt);
+      renderArbol(document.getElementById('arbolSearch')?.value || '');
+      return;
+    }
+    // ── PB individual expand/collapse ──────────────────────────────────────
+    const pbBtn = e.target.closest('.tree-expand-pb');
+    if (pbBtn) {
+      const edt    = pbBtn.dataset.edt;
+      const isOpen = pbBtn.classList.toggle('open');
+      if (isOpen) expandedPbNodes.add(edt); else expandedPbNodes.delete(edt);
+      document.getElementById('arbolBody')
+        ?.querySelectorAll(`.arbol-pb-detail[data-pb-parent="${edt}"]`)
+        .forEach(tr => tr.classList.toggle('arbol-pb-detail-visible', isOpen));
+    }
   });
 }
 
@@ -3331,9 +3480,10 @@ function setupTabFilters() {
   on('rankPosImpact', 'change', updateRank);
 
   // Plazos accordion filters
-  on('plSearch',  'input',  () => { if (D) renderPlazos(); });
-  on('plUpWeeks', 'input',  () => { if (D) renderPlazos(); });
-  on('plUpWeeks', 'change', () => { if (D) renderPlazos(); });
+  on('plSearch',       'input',  () => { if (D) renderPlazos(); });
+  on('plStatusFilter', 'change', () => { if (D) renderPlazos(); });
+  on('plUpWeeks',      'input',  () => { if (D) renderPlazos(); });
+  on('plUpWeeks',      'change', () => { if (D) renderPlazos(); });
 }
 
 
@@ -3988,10 +4138,11 @@ function _isoAddDays(iso, days) {
 // ── Plazos — Accordion por área ───────────────────────────────────────────────
 function renderPlazos() {
   if (!D) return;
-  const cutDate   = D.meta.dataDate;
-  const weeks     = Math.max(1, parseInt(document.getElementById('plUpWeeks')?.value || '4'));
-  const futureCut = _isoAddDays(cutDate, weeks * 7);
-  const q         = (document.getElementById('plSearch')?.value || '').toLowerCase();
+  const cutDate    = D.meta.dataDate;
+  const weeks      = Math.max(1, parseInt(document.getElementById('plUpWeeks')?.value || '4'));
+  const futureCut  = _isoAddDays(cutDate, weeks * 7);
+  const q          = (document.getElementById('plSearch')?.value || '').toLowerCase();
+  const statusF    = document.getElementById('plStatusFilter')?.value || 'all';
 
   const areas = D.areas
     .filter(a => a.nivel === 3 && a.incidencia > 0)
@@ -4001,7 +4152,7 @@ function renderPlazos() {
   const container = document.getElementById('plazosAccordion');
   if (!container) return;
 
-  container.innerHTML = areas.map(area => {
+  const cards = areas.map(area => {
     const prefix = area.edt + '.';
     const leaves = D.allLeaves.filter(r => r.edt.startsWith(prefix) || r.edt === area.edt);
 
@@ -4022,6 +4173,14 @@ function renderPlazos() {
 
     const total = notStarted.length + startedLate.length + upcoming.length;
 
+    // apply status filter
+    const show = statusF === 'all'
+      || (statusF === 'notStarted' && notStarted.length  > 0)
+      || (statusF === 'behind'     && startedLate.length > 0)
+      || (statusF === 'upcoming'   && upcoming.length    > 0)
+      || (statusF === 'ok'         && total === 0);
+    if (!show) return '';
+
     return `<div class="pl-card">
       <div class="pl-card-hdr" onclick="togglePlCard(this)">
         <i class="bi bi-chevron-right pl-chevron"></i>
@@ -4035,28 +4194,31 @@ function renderPlazos() {
         </div>
       </div>
       <div class="pl-card-body" style="display:none">
-        ${_buildPlBody(notStarted, startedLate, upcoming, cutDate)}
+        ${_buildPlBody(notStarted, startedLate, upcoming, cutDate, statusF)}
       </div>
     </div>`;
   }).join('');
+
+  container.innerHTML = cards || `<p class="plazos-empty">✓ ${t('pl.noAlerts')}</p>`;
 }
 
-function _buildPlBody(notStarted, startedLate, upcoming, cutDate) {
+function _buildPlBody(notStarted, startedLate, upcoming, cutDate, statusF = 'all') {
   const parts = [];
+  const show = s => statusF === 'all' || statusF === s;
 
-  if (notStarted.length) {
+  if (show('notStarted') && notStarted.length) {
     parts.push(`<div class="pl-sub pl-sub-late">
       <div class="pl-sub-hdr"><i class="bi bi-clock-history"></i> ${t('pl.lateTitle')} (${notStarted.length})</div>
       ${_plTable(notStarted, 'notStarted', cutDate)}
     </div>`);
   }
-  if (startedLate.length) {
+  if (show('behind') && startedLate.length) {
     parts.push(`<div class="pl-sub pl-sub-behind">
       <div class="pl-sub-hdr"><i class="bi bi-exclamation-triangle"></i> ${t('pl.behindTitle')} (${startedLate.length})</div>
       ${_plTable(startedLate, 'behind', cutDate)}
     </div>`);
   }
-  if (upcoming.length) {
+  if (show('upcoming') && upcoming.length) {
     parts.push(`<div class="pl-sub pl-sub-up">
       <div class="pl-sub-hdr"><i class="bi bi-calendar-check"></i> ${t('pl.upTitle')} (${upcoming.length})</div>
       ${_plTable(upcoming, 'upcoming', cutDate)}
@@ -4066,62 +4228,54 @@ function _buildPlBody(notStarted, startedLate, upcoming, cutDate) {
 }
 
 function _plTable(rows, type, cutDate) {
-  const numH = `<th>${t('th.num')}</th>`;
-  const actH = `<th class="left">${t('th.activity')}</th>`;
-  const edtH = `<th>${t('th.edt')}</th>`;
-  const iniH = `<th>${t('th.start')}</th>`;
-  const finH = `<th>${t('th.end')}</th>`;
-  const hhH  = `<th>${t('th.hh')}</th>`;
-  const ppH  = `<th>${t('th.pctCompPlan')}</th>`;
-  const prH  = `<th>${t('th.pctCompReal')}</th>`;
+  const extraH = type === 'notStarted' ? `<th>${t('pl.daysLate')}</th>`
+               : type === 'upcoming'   ? `<th>${t('pl.daysToStart')}</th>`
+               : '';
 
-  if (type === 'notStarted') {
-    return tableWrap(
-      `<tr>${numH}${actH}${edtH}${iniH}${finH}${hhH}${ppH}<th>${t('pl.daysLate')}</th></tr>`,
-      rows.map((r, i) => {
-        const days = _dateDiffDays(cutDate, r.inicio);
-        return `<tr>
-          <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
-          <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
-          <td>${Math.round(r.hh).toLocaleString()}</td>
-          <td>${pct(r.pctCompPlan)}</td>
-          <td class="plazos-days-late">${days}d</td>
-        </tr>`;
-      }).join('')
-    );
-  }
-  if (type === 'behind') {
-    return tableWrap(
-      `<tr>${numH}${actH}${edtH}${iniH}${finH}${hhH}${ppH}${prH}<th>${t('pl.deviation')}</th></tr>`,
-      rows.map((r, i) => {
-        const overdue = r.fin && r.fin <= cutDate;
-        return `<tr${overdue ? ' class="pl-row-overdue"' : ''}>
-          <td>${i+1}</td>
-          <td class="left">${r.tarea.trim()}${overdue ? ` <span class="pl-overdue-tag">${t('pl.overdueTag')}</span>` : ''}</td>
-          <td>${r.edt}</td>
-          <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
-          <td>${Math.round(r.hh).toLocaleString()}</td>
-          <td>${pct(r.pctCompPlan)}</td>
-          <td>${pct(r.pctCompReal)}</td>
-          <td class="plazos-days-late">${signPct(r.desviacion)}</td>
-        </tr>`;
-      }).join('')
-    );
-  }
-  // upcoming
-  return tableWrap(
-    `<tr>${numH}${actH}${edtH}${iniH}${finH}${hhH}${ppH}<th>${t('pl.daysToStart')}</th></tr>`,
-    rows.map((r, i) => {
-      const days = _dateDiffDays(r.inicio, cutDate);
-      return `<tr>
-        <td>${i+1}</td><td class="left">${r.tarea.trim()}</td><td>${r.edt}</td>
-        <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
-        <td>${Math.round(r.hh).toLocaleString()}</td>
-        <td>${pct(r.pctCompPlan)}</td>
-        <td class="plazos-days-upcoming">${days}d</td>
-      </tr>`;
-    }).join('')
-  );
+  const head = `<tr>
+    <th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th>
+    <th>${t('th.start')}</th><th>${t('th.end')}</th><th>${t('th.hh')}</th>
+    <th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>% Desvío</th>
+    <th>Incid Total</th><th>Incid Plan</th><th>Incid Real</th><th>Incid Desvío</th>
+    ${extraH}
+  </tr>`;
+
+  const body = rows.map((r, i) => {
+    const pctReal      = type === 'notStarted' ? 0 : r.pctCompReal;
+    const desviacion   = pctReal - r.pctCompPlan;
+    const incidPlan    = r.incidencia * r.pctCompPlan;
+    const incidReal    = r.incidencia * pctReal;
+    const incidDesv    = r.incidencia * desviacion;
+    const realCls      = devClass(pctReal - r.pctCompPlan);
+    const desvCls      = devClass(desviacion);
+    const incidRealCls = devClass(incidReal - incidPlan);
+    const incidDesvCls = devClass(incidDesv);
+    const overdue      = type === 'behind' && r.fin && r.fin <= cutDate;
+
+    const extraTd = type === 'notStarted'
+      ? `<td class="plazos-days-late">${_dateDiffDays(cutDate, r.inicio)}d</td>`
+      : type === 'upcoming'
+      ? `<td class="plazos-days-upcoming">${_dateDiffDays(r.inicio, cutDate)}d</td>`
+      : '';
+
+    return `<tr${overdue ? ' class="pl-row-overdue"' : ''}>
+      <td>${i+1}</td>
+      <td class="left">${r.tarea.trim()}${overdue ? ` <span class="pl-overdue-tag">${t('pl.overdueTag')}</span>` : ''}</td>
+      <td>${r.edt}</td>
+      <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
+      <td>${Math.round(r.hh).toLocaleString()}</td>
+      <td>${pct(r.pctCompPlan)}</td>
+      <td class="${realCls}">${pct(pctReal)}</td>
+      <td class="${desvCls}">${signPct(desviacion)}</td>
+      <td>${pct(r.incidencia, 4)}</td>
+      <td>${pct(incidPlan, 4)}</td>
+      <td class="${incidRealCls}">${pct(incidReal, 4)}</td>
+      <td class="${incidDesvCls}">${signPct(incidDesv, 4)}</td>
+      ${extraTd}
+    </tr>`;
+  }).join('');
+
+  return tableWrap(head, body);
 }
 
 function togglePlCard(hdr) {
@@ -4144,7 +4298,7 @@ function fmtDate(iso) {
   const [y,m,d] = iso.split('-');
   return `${d}/${m}/${y}`;
 }
-function devClass(v) { return v==null?'dev-neutral':v<-0.001?'dev-neg':v>0.001?'dev-pos':'dev-neutral'; }
+function devClass(v) { return v==null?'dev-neutral':v<-0.00001?'dev-neg':v>0.00001?'dev-pos':'dev-neutral'; }
 function statusBadge(r) {
   const cls = { completed:'badge-completed', inProgress:'badge-inProgress',
                 late:'badge-late', notStarted:'badge-notStarted' };
@@ -4450,17 +4604,27 @@ function _exportCronogramaPDFBase(summarized) {
     // ── Build table body ──────────────────────────────────────────────────────
     const head = [[
       t('th.edt'), t('th.activity'),
-      t('th.hh'), t('th.incidence'),
-      'PBs', 'PB Plan', 'PB Av.', 'PB Dev.',
-      t('th.pctPlan'), t('th.pctActual'), t('th.deviation'), t('th.status'),
+      t('th.hh'),
+      'PBs', 'PB Plan.', 'PB Av.', 'PB Dev.',
+      t('th.incidence'), 'INCD.PLAN', 'INCD.REAL', 'INCID. DESVÍO',
+      t('th.pctPlan'), t('th.pctActual'), '% DESV.',
+      t('th.status'),
     ]];
 
     const body = rows.map(r => {
-      const hh    = r.hh > 0       ? Math.round(r.hh).toLocaleString('es-CL') : '—';
-      const incid = r.incidencia > 0 ? (r.incidencia * 100).toFixed(3) + '%'   : '—';
-      const pPlan = r.pctCompPlan != null ? (r.pctCompPlan * 100).toFixed(2) + '%' : '—';
-      const pReal = r.pctCompReal != null ? (r.pctCompReal * 100).toFixed(2) + '%' : '—';
-      const dev   = r.incidencia > 0.0001
+      const hh        = r.hh > 0        ? Math.round(r.hh).toLocaleString('es-CL')       : '—';
+      const incid     = r.incidencia > 0 ? (r.incidencia * 100).toFixed(3) + '%'          : '—';
+      const pPlan     = r.pctCompPlan != null ? (r.pctCompPlan * 100).toFixed(2) + '%'    : '—';
+      const pReal     = r.pctCompReal != null ? (r.pctCompReal * 100).toFixed(2) + '%'    : '—';
+      const incdPlan  = r.incidencia > 0
+        ? (r.incidencia * (r.pctCompPlan || 0) * 100).toFixed(3) + '%' : '—';
+      const incdReal  = r.incidencia > 0
+        ? (r.incidencia * (r.pctCompReal || 0) * 100).toFixed(3) + '%' : '—';
+      const incidDesv = r.incidencia > 0.0001
+        ? ((r.incidencia * (r.desviacion || 0)) >= 0 ? '+' : '')
+          + (r.incidencia * (r.desviacion || 0) * 100).toFixed(3) + '%'
+        : '—';
+      const pctDesv   = r.incidencia > 0.0001
         ? ((r.desviacion || 0) >= 0 ? '+' : '') + ((r.desviacion || 0) * 100).toFixed(2) + '%'
         : '—';
       const hasPB = r.pbTotal != null;
@@ -4472,14 +4636,17 @@ function _exportCronogramaPDFBase(summarized) {
         r.edt || '',
         actName,
         hh,
-        incid,
         hasPB ? String(r.pbTotal)  : '—',
         hasPB ? String(r.pbPlan)   : '—',
         hasPB ? String(r.pbAv)     : '—',
         hasPB && r.pbDev != null ? String(r.pbDev) : '—',
+        incid,
+        incdPlan,
+        incdReal,
+        incidDesv,
         pPlan,
         pReal,
-        dev,
+        pctDesv,
         statusLbl[r.status] || '—',
       ];
     });
@@ -4508,20 +4675,23 @@ function _exportCronogramaPDFBase(summarized) {
       },
       alternateRowStyles: { fillColor: [250, 252, 255] },
 
-      // Column widths (total ≈ 273 mm for landscape A4 with 10mm margins)
+      // Column widths — 15 cols, total ≈ 259 mm (landscape A4, 277 mm usable)
       columnStyles: {
-        0:  { cellWidth: 26,   fontStyle: 'bold', halign: 'left'   },  // EDT
-        1:  { cellWidth: 82,   halign: 'left'                       },  // Activity
-        2:  { cellWidth: 17,   halign: 'right'                      },  // H-H
-        3:  { cellWidth: 16,   halign: 'right'                      },  // Incid.
-        4:  { cellWidth: 10,   halign: 'center'                     },  // PBs
-        5:  { cellWidth: 13,   halign: 'center'                     },  // PB Plan
-        6:  { cellWidth: 13,   halign: 'center'                     },  // PB Av.
-        7:  { cellWidth: 13,   halign: 'center'                     },  // PB Dev.
-        8:  { cellWidth: 17,   halign: 'right'                      },  // % Plan
-        9:  { cellWidth: 17,   halign: 'right'                      },  // % Real
-        10: { cellWidth: 17,   halign: 'right', fontStyle: 'bold'   },  // Desvío
-        11: { cellWidth: 22,   halign: 'center', fontStyle: 'bold'  },  // Status
+        0:  { cellWidth: 24,  fontStyle: 'bold', halign: 'left'  },  // EDT
+        1:  { cellWidth: 68,  halign: 'left'                      },  // Activity
+        2:  { cellWidth: 13,  halign: 'right'                     },  // H-H
+        3:  { cellWidth:  9,  halign: 'center'                    },  // PBs
+        4:  { cellWidth: 10,  halign: 'center'                    },  // PB Plan.
+        5:  { cellWidth: 10,  halign: 'center'                    },  // PB Av.
+        6:  { cellWidth: 10,  halign: 'center'                    },  // PB Dev.
+        7:  { cellWidth: 13,  halign: 'right'                     },  // Incid.
+        8:  { cellWidth: 13,  halign: 'right'                     },  // INCD.PLAN
+        9:  { cellWidth: 13,  halign: 'right'                     },  // INCD.REAL
+        10: { cellWidth: 15,  halign: 'right', fontStyle: 'bold'  },  // INCID. DESVÍO
+        11: { cellWidth: 13,  halign: 'right'                     },  // % Plan
+        12: { cellWidth: 13,  halign: 'right'                     },  // % Real
+        13: { cellWidth: 15,  halign: 'right', fontStyle: 'bold'  },  // % DESV.
+        14: { cellWidth: 20,  halign: 'center', fontStyle: 'bold' },  // Status
       },
 
       // didParseCell: hook correto para modificar estilos de célula no autoTable.
@@ -4539,15 +4709,22 @@ function _exportCronogramaPDFBase(summarized) {
           data.cell.styles.fontStyle = 'bold';
         }
 
-        // ── Desvio: vermelho / verde ─────────────────────────────────────────
+        // ── INCID. DESVÍO (col 10): vermelho / verde ─────────────────────────
         if (data.column.index === 10) {
-          const dev = r.desviacion || 0;
-          if      (dev < -0.001) data.cell.styles.textColor = [200, 30, 30];
-          else if (dev >  0.001) data.cell.styles.textColor = [22, 130, 60];
+          const v = (r.incidencia || 0) * (r.desviacion || 0);
+          if      (v < -0.00001) data.cell.styles.textColor = [200, 30, 30];
+          else if (v >  0.00001) data.cell.styles.textColor = [22, 130, 60];
         }
 
-        // ── Status: cor por estado ───────────────────────────────────────────
-        if (data.column.index === 11) {
+        // ── % DESV. (col 13): vermelho / verde ───────────────────────────────
+        if (data.column.index === 13) {
+          const dev = r.desviacion || 0;
+          if      (dev < -0.00001) data.cell.styles.textColor = [200, 30, 30];
+          else if (dev >  0.00001) data.cell.styles.textColor = [22, 130, 60];
+        }
+
+        // ── Status (col 14): cor por estado ──────────────────────────────────
+        if (data.column.index === 14) {
           const c = STATUS_CLR[r.status];
           if (c) data.cell.styles.textColor = c;
         }
