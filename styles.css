@@ -1667,9 +1667,22 @@ tr:hover td{background:var(--surface-2)}
 .dv-trend-down{color:var(--danger) ;font-weight:700}
 .dv-trend-neu {color:var(--text-muted)}
 
-/* Total row bold */
-.dv-total-row td{font-weight:700;background:#d6f0e0 !important;border-top:2px solid var(--success) !important;border-bottom:2px solid var(--success) !important}
-[data-theme="dark"] .dv-total-row td{background:#1a3d2a !important}
+/* Total row — green highlight, all contexts */
+.dv-total-row td,
+#arbolWrap .dv-total-row td,
+.grid-wrap .dv-total-row td {
+  font-weight:700 !important;
+  background:#d6f0e0 !important;
+  border-top:2px solid #16a34a !important;
+  border-bottom:2px solid #16a34a !important;
+  color:var(--text) !important;
+}
+[data-theme="dark"] .dv-total-row td,
+[data-theme="dark"] #arbolWrap .dv-total-row td,
+[data-theme="dark"] .grid-wrap .dv-total-row td {
+  background:#1a3d2a !important;
+  border-color:#22c55e !important;
+}
 
 /* Status table */
 .dv-status-ok  {color:var(--primary);font-weight:700}

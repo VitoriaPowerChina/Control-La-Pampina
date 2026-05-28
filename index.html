@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=5.5">
+  <link rel="stylesheet" href="styles.css?v=5.6">
   <script src="i18n.js?v=2.0"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -365,6 +365,7 @@
             <option value="imp_asc">Impacto ↑ (mayor primero)</option>
             <option value="imp_desc">Impacto ↓ (menor primero)</option>
           </select>
+          <button class="btn-pdf" id="criticasPdfBtn" onclick="exportCriticasPDF()">↓ PDF</button>
         </div>
       </div>
       <div style="position:relative;height:280px;margin-bottom:20px">
@@ -384,6 +385,7 @@
             <option value="incidencia">Ordenar: Incidencia ↓</option>
             <option value="pctPlan">Ordenar: % Plan ↓ (más atrasadas)</option>
           </select>
+          <button class="btn-pdf" id="sinAvancePdfBtn" onclick="exportSinAvancePDF()">↓ PDF</button>
         </div>
       </div>
       <p class="subtitle" data-i18n="sin.subtitle">Actividades con % Plan &gt; 0 y % Real = 0</p>
@@ -976,6 +978,6 @@
   </div>
 </div>
 
-<script src="app.js?v=7.9"></script>
+<script src="app.js?v=8.4"></script>
 </body>
 </html>

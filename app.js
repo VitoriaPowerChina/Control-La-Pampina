@@ -8,6 +8,8 @@ const collapsedNodes    = new Set();
 const expandedPbNodes   = new Set(); // consolidated leaves with PBs expanded in WBS
 let _wbsFilterEdt     = ''; // EDT selecionado na cascata WBS; '' = sem filtro
 let _scurveFilterEdt  = ''; // EDT selecionado no filtro da Curva S filtrada
+let _sinAvanceRows    = []; // last rendered Sin Avance rows (for PDF export)
+let _criticasRows     = []; // last rendered Críticas rows (for PDF export)
 let _consCache = null;
 let _consolTree = null;
 let _simRows    = new Map(); // edt → delta (number: PBs or percentage points)  — Escenarios tab
@@ -1382,7 +1384,7 @@ function renderDesviosPorAreas() {
   const totalIncidRealCls = devClass(totalIncidReal - totalIncidPlan);
 
   const totalHtml = `<tr class="dv-total-row">
-    <td class="left"><strong>${t('dv.total')}</strong></td>
+    <td class="left"></td>
     <td><strong>${totalRow ? (totalRow.pctCompPlan * 100).toFixed(1) + '%' : '—'}</strong></td>
     <td class="${totalRealCls}"><strong>${totalRow ? (totalRow.pctCompReal * 100).toFixed(1) + '%' : '—'}</strong></td>
     <td class="${totalRow2Cls}"><strong>${(totalDesvPP2 >= 0 ? '+' : '') + totalDesvPP2.toFixed(2)}%</strong></td>
@@ -2378,9 +2380,20 @@ function renderCriticasBar(rows) {
 }
 
 function renderCriticasTable(rows) {
+  _criticasRows = rows;
   const criticasTableEl = document.getElementById('criticasTable');
   if (!criticasTableEl) return;
   const areaMap = _buildAreaMap();
+  const totIncidPlan = rows.reduce((s, r) => s + r.incidencia * r.pctCompPlan, 0);
+  const totIncidReal = rows.reduce((s, r) => s + r.incidencia * r.pctCompReal, 0);
+  const totIncidDesv = rows.reduce((s, r) => s + r.incidencia * (r.desviacion || 0), 0);
+  const totalRow = `<tr class="dv-total-row">
+    <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+    <td></td>
+    <td><strong>${pct(totIncidPlan, 4)}</strong></td>
+    <td class="${devClass(totIncidReal - totIncidPlan)}"><strong>${pct(totIncidReal, 4)}</strong></td>
+    <td class="${devClass(totIncidDesv)}"><strong>${signPct(totIncidDesv, 4)}</strong></td>
+  </tr>`;
   criticasTableEl.innerHTML = tableWrap(
     `<tr>
       <th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th>
@@ -2390,7 +2403,7 @@ function renderCriticasTable(rows) {
       <th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>% Desvío</th>
       <th>Incid Total</th><th>Incid Plan</th><th>Incid Real</th><th>Incid Desvío</th>
     </tr>`,
-    rows.map((r, i) => {
+    totalRow + rows.map((r, i) => {
       const incidPlan    = r.incidencia * r.pctCompPlan;
       const incidReal    = r.incidencia * r.pctCompReal;
       const realCls      = devClass(r.pctCompReal - r.pctCompPlan);
@@ -2456,6 +2469,7 @@ function renderSinAvanceCharts(rows) {
 }
 
 function renderSinAvanceTable(rows) {
+  _sinAvanceRows = rows;
   const sinAvanceTableEl = document.getElementById('sinAvanceTable');
   if (!sinAvanceTableEl) return;
   const sort   = document.getElementById('sinSort')?.value || 'incidencia';
@@ -2483,10 +2497,10 @@ function renderSinAvanceTable(rows) {
         <td class="dev-neg">${signPct(incidDesv, 4)}</td>
       </tr>`).join('');
 
-  // total row: empty cells 1-9, "TOTAL" label in col 10 (right before the value cols)
+  // total row: empty cells 1-9, value cols 10-12
   const totalRow = `<tr class="dv-total-row">
         <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
-        <td style="text-align:right"><strong>${t('dv.total')}</strong></td>
+        <td></td>
         <td><strong>${pct(totalIncidPlan, 4)}</strong></td>
         <td class="dev-neg"><strong>0.000%</strong></td>
         <td class="dev-neg"><strong>${signPct(totalIncidDesv, 4)}</strong></td>
@@ -2501,6 +2515,249 @@ function renderSinAvanceTable(rows) {
     </tr>`,
     totalRow + bodyRows
   );
+}
+
+/** Export Sin Avance table to PDF (landscape A4, with green total row). */
+function exportSinAvancePDF() {
+  if (!window.jspdf) { showToast('jsPDF not available — check CDN connection', true); return; }
+  if (!D || !_sinAvanceRows.length) { showToast(t('toast.error') + 'Sin datos', true); return; }
+  const btn = document.getElementById('sinAvancePdfBtn');
+  if (btn) btn.disabled = true;
+  showToast(t('pdf.generating'), false, 60000);
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc   = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const ML    = 10;
+    const title = t('sin.title');
+    let startY  = _pdfHeader(doc, title, pageW, ML);
+    startY      = _pdfMeta(doc, startY, ML, pageW);
+
+    // Pre-compute
+    const computed = _sinAvanceRows.map(r => ({
+      r,
+      incidPlan: r.incidencia * r.pctCompPlan,
+      incidDesv: -(r.incidencia * r.pctCompPlan),
+    }));
+    const totIncidPlan = computed.reduce((s, c) => s + c.incidPlan, 0);
+    const totIncidDesv = computed.reduce((s, c) => s + c.incidDesv, 0);
+
+    const head = [['#', t('th.activity'), t('th.edt'),
+      t('th.start'), t('th.end'), t('th.hh'),
+      t('th.pctPlan'), '% Real', '% Desvío',
+      'Incid Total', 'Incid Plan', 'Incid Real', 'Incid Desvío']];
+
+    // Row 0 = total (green), rows 1..n = data
+    const totalBodyRow = ['', '', '', '', '', '', '', '', '', '',
+      (totIncidPlan * 100).toFixed(4) + '%',
+      '0.000%',
+      ((totIncidDesv * 100) >= 0 ? '+' : '') + (totIncidDesv * 100).toFixed(4) + '%',
+    ];
+
+    const dataRows = computed.map(({ r, incidPlan, incidDesv }, i) => [
+      String(i + 1),
+      r.tarea.trim(),
+      r.edt,
+      fmtDate(r.inicio),
+      fmtDate(r.fin),
+      Math.round(r.hh).toLocaleString('es-CL'),
+      (r.pctCompPlan * 100).toFixed(2) + '%',
+      '0.0%',
+      '-' + (r.pctCompPlan * 100).toFixed(2) + '%',
+      (r.incidencia * 100).toFixed(4) + '%',
+      (incidPlan * 100).toFixed(4) + '%',
+      '0.000%',
+      ((incidDesv * 100) >= 0 ? '+' : '') + (incidDesv * 100).toFixed(4) + '%',
+    ]);
+
+    const body = [totalBodyRow, ...dataRows];
+
+    doc.autoTable({
+      head, body, startY,
+      margin: { top: 23, left: ML, right: ML, bottom: 14 },
+      styles: { fontSize: 6.5, cellPadding: { top: 1.4, right: 2, bottom: 1.4, left: 2 },
+        overflow: 'linebreak', valign: 'middle', lineColor: [210, 218, 230], lineWidth: 0.2 },
+      headStyles: { fillColor: [0, 57, 115], textColor: 255, fontStyle: 'bold', fontSize: 7, halign: 'center' },
+      alternateRowStyles: { fillColor: [250, 252, 255] },
+      columnStyles: {
+        0:  { cellWidth:  8, halign: 'center' },
+        1:  { cellWidth: 58, halign: 'left'   },
+        2:  { cellWidth: 24, halign: 'left'   },
+        3:  { cellWidth: 17, halign: 'center' },
+        4:  { cellWidth: 17, halign: 'center' },
+        5:  { cellWidth: 13, halign: 'right'  },
+        6:  { cellWidth: 13, halign: 'right'  },
+        7:  { cellWidth: 12, halign: 'right'  },
+        8:  { cellWidth: 14, halign: 'right', fontStyle: 'bold' },
+        9:  { cellWidth: 16, halign: 'right'  },
+        10: { cellWidth: 16, halign: 'right'  },
+        11: { cellWidth: 16, halign: 'right'  },
+        12: { cellWidth: 18, halign: 'right', fontStyle: 'bold' },
+      },
+      didParseCell(data) {
+        if (data.section !== 'body') return;
+        if (data.row.index === 0) {
+          // Total row — green background, bold black text
+          data.cell.styles.fillColor  = [214, 240, 224];
+          data.cell.styles.fontStyle  = 'bold';
+          data.cell.styles.textColor  = [0, 0, 0];
+          data.cell.styles.lineColor  = [22, 163, 74];
+          data.cell.styles.lineWidth  = { top: 0.6, bottom: 0.6, left: 0.1, right: 0.1 };
+          return;
+        }
+        // Data rows
+        if (data.column.index === 8)  data.cell.styles.textColor = [200, 30, 30]; // % Desvío
+        if (data.column.index === 12) data.cell.styles.textColor = [200, 30, 30]; // Incid Desvío
+      },
+      didDrawPage(data) {
+        _pdfHeader(doc, title, pageW, ML);
+        const pg = doc.internal.getCurrentPageInfo().pageNumber;
+        doc.setFontSize(7); doc.setTextColor(160, 160, 160);
+        doc.text('PowerChina · La Pampina', ML, pageH - 4);
+        doc.text(`${t('pdf.page')} ${pg}`, pageW - ML, pageH - 4, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+      },
+    });
+
+    _pdfPageNumbers(doc, pageW, pageH, ML);
+    doc.save('SinAvance_LaPampina.pdf');
+    showToast(t('pdf.success'));
+  } catch (err) {
+    console.error('[exportSinAvancePDF]', err);
+    showToast(t('toast.error') + err.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/** Export Críticas table to PDF (landscape A4, with green total row). */
+function exportCriticasPDF() {
+  if (!window.jspdf) { showToast('jsPDF not available — check CDN connection', true); return; }
+  if (!D || !_criticasRows.length) { showToast(t('toast.error') + 'Sin datos', true); return; }
+  const btn = document.getElementById('criticasPdfBtn');
+  if (btn) btn.disabled = true;
+  showToast(t('pdf.generating'), false, 60000);
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc   = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const ML    = 10;
+    const title = t('cr.title');
+    let startY  = _pdfHeader(doc, title, pageW, ML);
+    startY      = _pdfMeta(doc, startY, ML, pageW);
+    const areaMap = _buildAreaMap();
+
+    // Pre-compute totals
+    const computed = _criticasRows.map(r => ({
+      r,
+      incidPlan: r.incidencia * r.pctCompPlan,
+      incidReal: r.incidencia * r.pctCompReal,
+      incidDesv: r.incidencia * (r.desviacion || 0),
+    }));
+    const totIncidPlan = computed.reduce((s, c) => s + c.incidPlan, 0);
+    const totIncidReal = computed.reduce((s, c) => s + c.incidReal, 0);
+    const totIncidDesv = computed.reduce((s, c) => s + c.incidDesv, 0);
+
+    const head = [['#', t('th.activity'), t('th.edt'), t('th.area'),
+      t('th.start'), t('th.end'), t('th.hh'),
+      t('th.pctPlan'), '% Real', '% Desvío',
+      'Incid Total', 'Incid Plan', 'Incid Real', 'Incid Desvío']];
+
+    // Row 0 = total (green)
+    const s4 = v => ((v * 100) >= 0 ? '+' : '') + (v * 100).toFixed(4) + '%';
+    const totalBodyRow = ['', '', '', '', '', '', '', '', '', '', '',
+      (totIncidPlan * 100).toFixed(4) + '%',
+      (totIncidReal * 100).toFixed(4) + '%',
+      s4(totIncidDesv),
+    ];
+
+    const dataRows = computed.map(({ r, incidPlan, incidReal, incidDesv }, i) => [
+      String(i + 1),
+      r.tarea.trim(),
+      r.edt,
+      _areaOfEdt(r.edt, areaMap),
+      fmtDate(r.inicio),
+      fmtDate(r.fin),
+      Math.round(r.hh).toLocaleString('es-CL'),
+      (r.pctCompPlan * 100).toFixed(2) + '%',
+      (r.pctCompReal * 100).toFixed(2) + '%',
+      ((r.desviacion || 0) >= 0 ? '+' : '') + ((r.desviacion || 0) * 100).toFixed(2) + '%',
+      (r.incidencia * 100).toFixed(4) + '%',
+      (incidPlan * 100).toFixed(4) + '%',
+      (incidReal * 100).toFixed(4) + '%',
+      s4(incidDesv),
+    ]);
+
+    const body = [totalBodyRow, ...dataRows];
+
+    doc.autoTable({
+      head, body, startY,
+      margin: { top: 23, left: ML, right: ML, bottom: 14 },
+      styles: { fontSize: 6.5, cellPadding: { top: 1.4, right: 2, bottom: 1.4, left: 2 },
+        overflow: 'linebreak', valign: 'middle', lineColor: [210, 218, 230], lineWidth: 0.2 },
+      headStyles: { fillColor: [0, 57, 115], textColor: 255, fontStyle: 'bold', fontSize: 7, halign: 'center' },
+      alternateRowStyles: { fillColor: [250, 252, 255] },
+      columnStyles: {
+        0:  { cellWidth:  7, halign: 'center' },
+        1:  { cellWidth: 50, halign: 'left'   },
+        2:  { cellWidth: 22, halign: 'left'   },
+        3:  { cellWidth: 28, halign: 'left'   },
+        4:  { cellWidth: 16, halign: 'center' },
+        5:  { cellWidth: 16, halign: 'center' },
+        6:  { cellWidth: 12, halign: 'right'  },
+        7:  { cellWidth: 13, halign: 'right'  },
+        8:  { cellWidth: 13, halign: 'right'  },
+        9:  { cellWidth: 14, halign: 'right', fontStyle: 'bold' },
+        10: { cellWidth: 14, halign: 'right'  },
+        11: { cellWidth: 14, halign: 'right'  },
+        12: { cellWidth: 14, halign: 'right'  },
+        13: { cellWidth: 17, halign: 'right', fontStyle: 'bold' },
+      },
+      didParseCell(data) {
+        if (data.section !== 'body') return;
+        if (data.row.index === 0) {
+          // Total row — green background, bold black text
+          data.cell.styles.fillColor = [214, 240, 224];
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.textColor = [0, 0, 0];
+          data.cell.styles.lineColor = [22, 163, 74];
+          data.cell.styles.lineWidth = { top: 0.6, bottom: 0.6, left: 0.1, right: 0.1 };
+          return;
+        }
+        const c = computed[data.row.index - 1];
+        if (!c) return;
+        if (data.column.index === 9) {  // % Desvío
+          const dev = c.r.desviacion || 0;
+          if (dev < -0.00001) data.cell.styles.textColor = [200, 30, 30];
+          else if (dev > 0.00001) data.cell.styles.textColor = [22, 130, 60];
+        }
+        if (data.column.index === 13) {  // Incid Desvío
+          const v = c.incidDesv;
+          if (v < -0.00001) data.cell.styles.textColor = [200, 30, 30];
+          else if (v > 0.00001) data.cell.styles.textColor = [22, 130, 60];
+        }
+      },
+      didDrawPage(data) {
+        _pdfHeader(doc, title, pageW, ML);
+        const pg = doc.internal.getCurrentPageInfo().pageNumber;
+        doc.setFontSize(7); doc.setTextColor(160, 160, 160);
+        doc.text('PowerChina · La Pampina', ML, pageH - 4);
+        doc.text(`${t('pdf.page')} ${pg}`, pageW - ML, pageH - 4, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+      },
+    });
+
+    _pdfPageNumbers(doc, pageW, pageH, ML);
+    doc.save('Criticas_LaPampina.pdf');
+    showToast(t('pdf.success'));
+  } catch (err) {
+    console.error('[exportCriticasPDF]', err);
+    showToast(t('toast.error') + err.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ── Ranking Bar + Table ───────────────────────────────────────────────────────
@@ -2545,11 +2802,33 @@ function _renderRankingBar(rows, canvasId, isNeg) {
 function _renderRankingTable(rows, tableId, isNeg) {
   const el = document.getElementById(tableId);
   if (!el) return;
+
+  // ── totals ────────────────────────────────────────────────────────────────
+  const totalHH       = rows.reduce((s, r) => s + (r.hh || 0), 0);
+  const totalIncid    = rows.reduce((s, r) => s + r.incidencia, 0);
+  const totalPctPlan  = rows.reduce((s, r) => s + r.pctPlan, 0);
+  const totalPctReal  = rows.reduce((s, r) => s + r.pctReal, 0);
+  const totalDesvPond = rows.reduce((s, r) => s + r.desvPond, 0);
+  const avgPlan       = totalIncid > 0 ? totalPctPlan / totalIncid : 0;
+  const avgReal       = totalIncid > 0 ? totalPctReal / totalIncid : 0;
+
+  const rankTotalRow = `<tr class="dv-total-row">
+    <td></td><td></td><td></td>
+    <td><strong>${Math.round(totalHH).toLocaleString()}</strong></td>
+    <td><strong>${pct(totalIncid, 4)}</strong></td>
+    <td><strong>${pct(totalPctPlan, 4)}</strong></td>
+    <td class="${devClass(avgReal - avgPlan)}"><strong>${pct(totalPctReal, 4)}</strong></td>
+    <td class="${devClass(totalDesvPond)}"><strong>${signPct(totalDesvPond, 4)}</strong></td>
+    <td><strong>${pct(avgPlan)}</strong></td>
+    <td class="${devClass(avgReal - avgPlan)}"><strong>${pct(avgReal)}</strong></td>
+    <td></td>
+  </tr>`;
+
   el.innerHTML = tableWrap(
     `<tr><th>${t('th.num')}</th><th class="left">${t('th.activity')}</th><th>${t('th.edt')}</th><th>${t('th.hh')}</th>
      <th>${t('th.incidence')}</th><th>${t('th.pctPlanPond')}</th><th>${t('th.pctRealPond')}</th><th>${t('th.impactPond')}</th>
      <th>${t('th.pctPlan')}</th><th>${t('th.pctActual')}</th><th>${t('th.clasif')}</th></tr>`,
-    rows.map((r, i) => {
+    rankTotalRow + rows.map((r, i) => {
       const imp = Math.abs(r.desvPond);
       const cls = imp>0.005?'badge badge-crit':imp>0.002?'badge badge-late':imp>0.0005?'badge badge-warn':'badge badge-ok';
       const lbl = imp>0.005?t('rank.crit'):imp>0.002?t('rank.high'):imp>0.0005?t('rank.mid'):t('rank.low');
@@ -2860,7 +3139,41 @@ function renderConsolidadoTable(rows) {
     });
   });
 
-  el.innerHTML = `<div class="grid-wrap"><table><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+  // ── totals ────────────────────────────────────────────────────────────────
+  const totPbTotal  = rows.reduce((s, g) => s + g.pbTotal, 0);
+  const totPbPlan   = rows.reduce((s, g) => s + g.pbPlan,  0);
+  const totPbAv     = rows.reduce((s, g) => s + g.pbAv,    0);
+  const totPbDev    = rows.reduce((s, g) => s + g.pbDev,   0);
+  const totIncTotal = rows.reduce((s, g) => s + g.incTotal, 0);
+  const totPesoPlan = rows.reduce((s, g) => s + g.pesoPlan, 0);
+  const totPesoReal = rows.reduce((s, g) => s + g.pesoReal, 0);
+  const totIncDesv  = totPesoReal - totPesoPlan;
+  const totPlanCons = totIncTotal > 0 ? totPesoPlan / totIncTotal : 0;
+  const totRealCons = totIncTotal > 0 ? totPesoReal / totIncTotal : 0;
+  const totGap      = totRealCons - totPlanCons;
+  const totGapCls   = devClass(totGap);
+  const totBar = `<div class="cons-leaf-bars">
+    <div class="cons-leaf-bar" style="width:${(totPlanCons*100).toFixed(1)}%;background:var(--primary)" title="Plan ${(totPlanCons*100).toFixed(1)}%"></div>
+    <div class="cons-leaf-bar" style="width:${(totRealCons*100).toFixed(1)}%;background:${totGap < -0.001 ? 'var(--danger)' : 'var(--success)'}" title="Real ${(totRealCons*100).toFixed(1)}%"></div>
+  </div>`;
+  const consTotalRow = `<tr class="dv-total-row">
+    <td class="left"></td>
+    <td></td>
+    <td><strong>${totPbTotal}</strong></td>
+    <td><strong>${totPbPlan}</strong></td>
+    <td><strong>${totPbAv}</strong></td>
+    <td class="${totPbDev > 0 ? 'dev-neg' : 'dev-neutral'}"><strong>${totPbDev > 0 ? totPbDev : '—'}</strong></td>
+    <td><strong>${pct(totIncTotal, 3)}</strong></td>
+    <td><strong>${pct(totPesoPlan, 3)}</strong></td>
+    <td class="${devClass(totRealCons - totPlanCons)}"><strong>${pct(totPesoReal, 3)}</strong></td>
+    <td class="${devClass(totIncDesv)}"><strong>${signPct(totIncDesv, 3)}</strong></td>
+    <td><strong>${pct(totPlanCons)}</strong></td>
+    <td class="${devClass(totRealCons - totPlanCons)}"><strong>${pct(totRealCons)}</strong></td>
+    <td>${totBar}</td>
+    <td class="${totGapCls}"><strong>${signPct(totGap)}</strong></td>
+  </tr>`;
+
+  el.innerHTML = `<div class="grid-wrap"><table><thead>${thead}</thead><tbody>${consTotalRow}${tbody}</tbody></table></div>`;
 
   // ── Event delegation: expand / collapse ───────────────────────────────
   const table = el.querySelector('table');
@@ -3248,7 +3561,7 @@ function renderArbol(filter) {
   });
 
   if (q) {
-    // Search mode: show flat matches, no hiding
+    // Search mode: show flat matches, no hiding; no total row
     const matches = allRecs.filter(r =>
       r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)
     );
@@ -3256,7 +3569,28 @@ function renderArbol(filter) {
     return;
   }
 
-  tbody.innerHTML = allRecs.map(r => {
+  // ── WBS total row — uses D.meta (same source as KPI bar) ───────────────────
+  const m        = D.meta;
+  const devCls   = devClass(m.desvio);
+  const realCls  = devClass(m.pctReal - m.pctPlan);
+  const wbsTotalRow = `<tr class="dv-total-row">
+    <td></td>
+    <td></td>
+    <td><strong>${Math.round(m.totalHH).toLocaleString()}</strong></td>
+    <td>—</td><td>—</td>
+    <td>—</td><td>—</td><td>—</td><td>—</td>
+    <td><strong>100.000%</strong></td>
+    <td class="incd-plan"><strong>${pct(m.pctPlan, 3)}</strong></td>
+    <td class="incd-real"><strong>${pct(m.pctReal, 3)}</strong></td>
+    <td class="${devCls}"><strong>${signPct(m.desvio, 3)}</strong></td>
+    <td><strong>${pct(m.pctPlan)}</strong></td>
+    <td class="${realCls}"><strong>${pct(m.pctReal)}</strong></td>
+    <td class="${devCls}"><strong>${signPct(m.desvio)}</strong></td>
+    <td>—</td>
+    <td>${_progBars(m.pctPlan, m.pctReal, m.desvio)}</td>
+  </tr>`;
+
+  tbody.innerHTML = wbsTotalRow + allRecs.map(r => {
     const wbsHidden = _wbsFilterEdt !== ''
       && r.edt !== _wbsFilterEdt
       && !r.edt.startsWith(_wbsFilterEdt + '.');
@@ -4663,10 +4997,29 @@ function _exportCronogramaPDFBase(summarized) {
       ];
     });
 
+    // ── Total row (row index 0) using D.meta ──────────────────────────────────
+    const m = D.meta;
+    const wbsTotalRow = [
+      '',
+      '',
+      Math.round(m.totalHH).toLocaleString('es-CL'),
+      '—', '—',
+      '—', '—', '—', '—',
+      '100.000%',
+      (m.pctPlan * 100).toFixed(3) + '%',
+      (m.pctReal * 100).toFixed(3) + '%',
+      ((m.desvio * 100) >= 0 ? '+' : '') + (m.desvio * 100).toFixed(3) + '%',
+      (m.pctPlan * 100).toFixed(2) + '%',
+      (m.pctReal * 100).toFixed(2) + '%',
+      ((m.desvio * 100) >= 0 ? '+' : '') + (m.desvio * 100).toFixed(2) + '%',
+      '—',
+    ];
+    const bodyWithTotal = [wbsTotalRow, ...body];
+
     // ── Draw autoTable ────────────────────────────────────────────────────────
     doc.autoTable({
       head,
-      body,
+      body: bodyWithTotal,
       startY,
       margin: { top: 23, left: ML, right: ML, bottom: 14 },
 
@@ -4712,7 +5065,19 @@ function _exportCronogramaPDFBase(summarized) {
       // (willDrawCell é para desenho nativo jsPDF — não altera o estilo da tabela)
       didParseCell(data) {
         if (data.section !== 'body') return;
-        const r = rows[data.row.index];
+
+        // ── Row 0 = total row (green, bold black) ────────────────────────────
+        if (data.row.index === 0) {
+          data.cell.styles.fillColor = [214, 240, 224];
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.textColor = [0, 0, 0];
+          data.cell.styles.lineColor = [22, 163, 74];
+          data.cell.styles.lineWidth = { top: 0.6, bottom: 0.6, left: 0.1, right: 0.1 };
+          return;
+        }
+
+        // ── Data rows (offset by 1 because row 0 is total) ────────────────────
+        const r = rows[data.row.index - 1];
         if (!r) return;
 
         // ── Linhas pai (resumen / virtual): fundo cinza por nível ────────────
