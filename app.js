@@ -2483,8 +2483,10 @@ function renderSinAvanceTable(rows) {
         <td class="dev-neg">${signPct(incidDesv, 4)}</td>
       </tr>`).join('');
 
+  // total row: empty cells 1-9, "TOTAL" label in col 10 (right before the value cols)
   const totalRow = `<tr class="dv-total-row">
-        <td colspan="10" class="left"><strong>${t('dv.total')}</strong></td>
+        <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+        <td style="text-align:right"><strong>${t('dv.total')}</strong></td>
         <td><strong>${pct(totalIncidPlan, 4)}</strong></td>
         <td class="dev-neg"><strong>0.000%</strong></td>
         <td class="dev-neg"><strong>${signPct(totalIncidDesv, 4)}</strong></td>
@@ -2497,7 +2499,7 @@ function renderSinAvanceTable(rows) {
       <th>${plnHdr}</th><th>${t('th.pctActual')}</th><th>% Desvío</th>
       <th>${incHdr}</th><th>Incid Plan</th><th>Incid Real</th><th>Incid Desvío</th>
     </tr>`,
-    bodyRows + totalRow
+    totalRow + bodyRows
   );
 }
 
@@ -2755,9 +2757,9 @@ function applyConsolidadoFilters() {
       statsEl.innerHTML = `
         <span class="cs-pill">${rows.length} tipos de actividad</span>
         <span class="cs-pill">HH total <strong>${Math.round(totHH).toLocaleString()}</strong></span>
-        <span class="cs-pill">Plan consol. <strong>${pct(pC)}</strong></span>
-        <span class="cs-pill">Real consol. <strong>${pct(rC)}</strong></span>
-        <span class="cs-pill ${gap < 0 ? 'cs-neg' : 'cs-pos'}">Gap <strong>${signPct(gap)}</strong></span>`;
+        <span class="cs-pill">Incid. Plan <strong>${pct(pC)}</strong></span>
+        <span class="cs-pill">Incid. Real <strong>${pct(rC)}</strong></span>
+        <span class="cs-pill ${gap < 0 ? 'cs-neg' : 'cs-pos'}">Incid. Desv <strong>${signPct(gap)}</strong></span>`;
     } else {
       statsEl.innerHTML = '';
     }
@@ -3099,6 +3101,8 @@ function buildArbolRow(r, edtsWithChildren, hidden) {
       </td>
       <td class="left"><span class="cons-tarea-tree">${r.tarea}</span></td>
       <td>${hhVal}</td>
+      <td>${fmtDate(r.inicio)}</td>
+      <td>${fmtDate(r.fin)}</td>
       <td class="cons-pb-num"><strong>${r.pbTotal}</strong></td>
       <td>${r.pbPlan}</td>
       <td>${r.pbAv}</td>
@@ -3136,6 +3140,8 @@ function buildArbolRow(r, edtsWithChildren, hidden) {
         </td>
         <td class="left"><span class="cons-edt-lbl">${leaf.edt}</span></td>
         <td>—</td>
+        <td>${fmtDate(leaf.inicio)}</td>
+        <td>${fmtDate(leaf.fin)}</td>
         <td>—</td><td>—</td><td>—</td><td>—</td>
         <td>${pct(leaf.incidencia,3)}</td>
         <td>${pct(leaf.incidencia * leaf.pctCompPlan,3)}</td>
@@ -3166,6 +3172,8 @@ function buildArbolRow(r, edtsWithChildren, hidden) {
       </td>
       <td class="left"><strong class="tree-virtual-label">${r.tarea}</strong></td>
       <td>${hhVal}</td>
+      <td>${fmtDate(r.inicio)}</td>
+      <td>${fmtDate(r.fin)}</td>
       <td class="cons-pb-num"><strong>${r.pbTotal}</strong></td>
       <td>${r.pbPlan}</td>
       <td>${r.pbAv}</td>
@@ -3205,6 +3213,8 @@ function buildArbolRow(r, edtsWithChildren, hidden) {
     </td>
     <td class="left">${r.tarea.trim()}</td>
     <td>${hh}</td>
+    <td>${fmtDate(r.inicio)}</td>
+    <td>${fmtDate(r.fin)}</td>
     <td class="cons-pb-num">${hasPB ? `<strong>${r.pbTotal}</strong>` : '—'}</td>
     <td>${hasPB ? r.pbPlan : '—'}</td>
     <td>${hasPB ? r.pbAv   : '—'}</td>
@@ -4187,9 +4197,9 @@ function renderPlazos() {
         <span class="pl-card-edt">${area.edt}</span>
         <span class="pl-card-name">${area.tarea.trim()}</span>
         <div class="pl-card-badges">
-          ${notStarted.length  ? `<span class="pl-badge pl-badge-late">${notStarted.length} no iniciadas</span>`  : ''}
+          ${notStarted.length  ? `<span class="pl-badge pl-badge-late">${notStarted.length} No iniciadas</span>`  : ''}
           ${startedLate.length ? `<span class="pl-badge pl-badge-behind">${startedLate.length} c/ atraso</span>`  : ''}
-          ${upcoming.length    ? `<span class="pl-badge pl-badge-up">${upcoming.length} próximas</span>`           : ''}
+          ${upcoming.length    ? `<span class="pl-badge pl-badge-up">${upcoming.length} Próximas</span>`           : ''}
           ${total === 0        ? `<span class="pl-badge pl-badge-ok">✓ Sin alertas</span>`                         : ''}
         </div>
       </div>
@@ -4604,7 +4614,7 @@ function _exportCronogramaPDFBase(summarized) {
     // ── Build table body ──────────────────────────────────────────────────────
     const head = [[
       t('th.edt'), t('th.activity'),
-      t('th.hh'),
+      t('th.hh'), t('th.start'), t('th.end'),
       'PBs', 'PB Plan.', 'PB Av.', 'PB Dev.',
       t('th.incidence'), 'INCD.PLAN', 'INCD.REAL', 'INCID. DESVÍO',
       t('th.pctPlan'), t('th.pctActual'), '% DESV.',
@@ -4636,6 +4646,8 @@ function _exportCronogramaPDFBase(summarized) {
         r.edt || '',
         actName,
         hh,
+        fmtDate(r.inicio),
+        fmtDate(r.fin),
         hasPB ? String(r.pbTotal)  : '—',
         hasPB ? String(r.pbPlan)   : '—',
         hasPB ? String(r.pbAv)     : '—',
@@ -4675,23 +4687,25 @@ function _exportCronogramaPDFBase(summarized) {
       },
       alternateRowStyles: { fillColor: [250, 252, 255] },
 
-      // Column widths — 15 cols, total ≈ 259 mm (landscape A4, 277 mm usable)
+      // Column widths — 17 cols, total ≈ 274 mm (landscape A4, 277 mm usable)
       columnStyles: {
-        0:  { cellWidth: 24,  fontStyle: 'bold', halign: 'left'  },  // EDT
-        1:  { cellWidth: 68,  halign: 'left'                      },  // Activity
-        2:  { cellWidth: 13,  halign: 'right'                     },  // H-H
-        3:  { cellWidth:  9,  halign: 'center'                    },  // PBs
-        4:  { cellWidth: 10,  halign: 'center'                    },  // PB Plan.
-        5:  { cellWidth: 10,  halign: 'center'                    },  // PB Av.
-        6:  { cellWidth: 10,  halign: 'center'                    },  // PB Dev.
-        7:  { cellWidth: 13,  halign: 'right'                     },  // Incid.
-        8:  { cellWidth: 13,  halign: 'right'                     },  // INCD.PLAN
-        9:  { cellWidth: 13,  halign: 'right'                     },  // INCD.REAL
-        10: { cellWidth: 15,  halign: 'right', fontStyle: 'bold'  },  // INCID. DESVÍO
-        11: { cellWidth: 13,  halign: 'right'                     },  // % Plan
-        12: { cellWidth: 13,  halign: 'right'                     },  // % Real
-        13: { cellWidth: 15,  halign: 'right', fontStyle: 'bold'  },  // % DESV.
-        14: { cellWidth: 20,  halign: 'center', fontStyle: 'bold' },  // Status
+        0:  { cellWidth: 22,  fontStyle: 'bold', halign: 'left'  },  // EDT
+        1:  { cellWidth: 55,  halign: 'left'                      },  // Activity
+        2:  { cellWidth: 11,  halign: 'right'                     },  // H-H
+        3:  { cellWidth: 16,  halign: 'center'                    },  // Inicio
+        4:  { cellWidth: 16,  halign: 'center'                    },  // Fin
+        5:  { cellWidth:  9,  halign: 'center'                    },  // PBs
+        6:  { cellWidth: 10,  halign: 'center'                    },  // PB Plan.
+        7:  { cellWidth: 10,  halign: 'center'                    },  // PB Av.
+        8:  { cellWidth: 10,  halign: 'center'                    },  // PB Dev.
+        9:  { cellWidth: 13,  halign: 'right'                     },  // Incid.
+        10: { cellWidth: 13,  halign: 'right'                     },  // INCD.PLAN
+        11: { cellWidth: 13,  halign: 'right'                     },  // INCD.REAL
+        12: { cellWidth: 15,  halign: 'right', fontStyle: 'bold'  },  // INCID. DESVÍO
+        13: { cellWidth: 13,  halign: 'right'                     },  // % Plan
+        14: { cellWidth: 13,  halign: 'right'                     },  // % Real
+        15: { cellWidth: 15,  halign: 'right', fontStyle: 'bold'  },  // % DESV.
+        16: { cellWidth: 20,  halign: 'center', fontStyle: 'bold' },  // Status
       },
 
       // didParseCell: hook correto para modificar estilos de célula no autoTable.
@@ -4709,22 +4723,22 @@ function _exportCronogramaPDFBase(summarized) {
           data.cell.styles.fontStyle = 'bold';
         }
 
-        // ── INCID. DESVÍO (col 10): vermelho / verde ─────────────────────────
-        if (data.column.index === 10) {
+        // ── INCID. DESVÍO (col 12): vermelho / verde ─────────────────────────
+        if (data.column.index === 12) {
           const v = (r.incidencia || 0) * (r.desviacion || 0);
           if      (v < -0.00001) data.cell.styles.textColor = [200, 30, 30];
           else if (v >  0.00001) data.cell.styles.textColor = [22, 130, 60];
         }
 
-        // ── % DESV. (col 13): vermelho / verde ───────────────────────────────
-        if (data.column.index === 13) {
+        // ── % DESV. (col 15): vermelho / verde ───────────────────────────────
+        if (data.column.index === 15) {
           const dev = r.desviacion || 0;
           if      (dev < -0.00001) data.cell.styles.textColor = [200, 30, 30];
           else if (dev >  0.00001) data.cell.styles.textColor = [22, 130, 60];
         }
 
-        // ── Status (col 14): cor por estado ──────────────────────────────────
-        if (data.column.index === 14) {
+        // ── Status (col 16): cor por estado ──────────────────────────────────
+        if (data.column.index === 16) {
           const c = STATUS_CLR[r.status];
           if (c) data.cell.styles.textColor = c;
         }

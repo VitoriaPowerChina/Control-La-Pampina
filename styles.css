@@ -1668,7 +1668,8 @@ tr:hover td{background:var(--surface-2)}
 .dv-trend-neu {color:var(--text-muted)}
 
 /* Total row bold */
-.dv-total-row td{font-weight:700;background:var(--surface-2) !important;border-top:2px solid var(--border) !important}
+.dv-total-row td{font-weight:700;background:#d6f0e0 !important;border-top:2px solid var(--success) !important;border-bottom:2px solid var(--success) !important}
+[data-theme="dark"] .dv-total-row td{background:#1a3d2a !important}
 
 /* Status table */
 .dv-status-ok  {color:var(--primary);font-weight:700}

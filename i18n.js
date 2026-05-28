@@ -353,7 +353,7 @@ es: {
   'pl.overdueTag':     'VENCIDA',
   'pl.filterAll':       'Todas',
   'pl.filterNotStarted':'No iniciadas',
-  'pl.filterBehind':    'Con atraso',
+  'pl.filterBehind':    'c/ atraso',
   'pl.filterUpcoming':  'Próximas',
   'pl.filterOk':        'Sin alertas',
 },

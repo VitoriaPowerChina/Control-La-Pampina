@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=5.4">
+  <link rel="stylesheet" href="styles.css?v=5.5">
   <script src="i18n.js?v=2.0"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -413,7 +413,7 @@
           <select id="plStatusFilter" class="filter-select">
             <option value="all"         data-i18n="pl.filterAll">Todas</option>
             <option value="notStarted"  data-i18n="pl.filterNotStarted">No iniciadas</option>
-            <option value="behind"      data-i18n="pl.filterBehind">Con atraso</option>
+            <option value="behind"      data-i18n="pl.filterBehind">c/ atraso</option>
             <option value="upcoming"    data-i18n="pl.filterUpcoming">Próximas</option>
             <option value="ok"          data-i18n="pl.filterOk">Sin alertas</option>
           </select>
@@ -524,6 +524,8 @@
               <th class="left" style="min-width:170px" data-i18n="th.edt">EDT</th>
               <th class="left" style="min-width:220px" data-i18n="th.activity">Actividad</th>
               <th data-i18n="th.hh">H-H</th>
+              <th data-i18n="th.start">Inicio</th>
+              <th data-i18n="th.end">Fin</th>
               <th>PBs</th>
               <th>PB Plan.</th>
               <th>PB Av.</th>
@@ -974,6 +976,6 @@
   </div>
 </div>
 
-<script src="app.js?v=7.8"></script>
+<script src="app.js?v=7.9"></script>
 </body>
 </html>
