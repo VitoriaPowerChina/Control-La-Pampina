@@ -4622,6 +4622,241 @@ function _plTable(rows, type, cutDate) {
   return tableWrap(head, body);
 }
 
+// ── Plazos — Excel Export ─────────────────────────────────────────────────────
+async function exportPlazosXLSX() {
+  if (!D) return;
+  const btn = document.getElementById('plExportBtn');
+  const origHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando...'; }
+
+  try {
+    if (!window.ExcelJS) { alert('ExcelJS no disponible. Revise la conexión a internet.'); return; }
+
+    // ── Same filters as renderPlazos ──────────────────────────────────────────
+    const cutDate   = D.meta.dataDate;
+    const weeks     = Math.max(1, parseInt(document.getElementById('plUpWeeks')?.value || '4'));
+    const futureCut = _isoAddDays(cutDate, weeks * 7);
+    const q         = (document.getElementById('plSearch')?.value || '').toLowerCase();
+    const statusF   = document.getElementById('plStatusFilter')?.value || 'all';
+
+    const areas = D.areas
+      .filter(a => a.nivel === 3 && a.incidencia > 0)
+      .filter(a => !q || a.tarea.toLowerCase().includes(q) || a.edt.toLowerCase().includes(q))
+      .sort((a, b) => a.edt.localeCompare(b.edt));
+
+    // ── Workbook setup ────────────────────────────────────────────────────────
+    const wb = new window.ExcelJS.Workbook();
+    wb.creator = 'PowerChina — La Pampina';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Plazos', { views: [{ state: 'frozen', ySplit: 3 }] });
+
+    const NCOLS = 14;
+    ws.columns = [
+      { width: 5  }, // #
+      { width: 42 }, // Actividad
+      { width: 15 }, // EDT
+      { width: 12 }, // Inicio
+      { width: 12 }, // Fin
+      { width: 10 }, // H-H
+      { width: 10 }, // %Plan
+      { width: 10 }, // %Real
+      { width: 11 }, // %Desvío
+      { width: 12 }, // Incid Total
+      { width: 12 }, // Incid Plan
+      { width: 12 }, // Incid Real
+      { width: 13 }, // Incid Desvío
+      { width: 12 }, // Días
+    ];
+
+    // ── Helper: apply fill + font to all cells in a row ───────────────────────
+    const fillRow = (row, bg, fg, bold = false, sz = 10) => {
+      for (let c = 1; c <= NCOLS; c++) {
+        const cell = row.getCell(c);
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        cell.font = { bold, size: sz, color: { argb: fg } };
+        cell.alignment = { vertical: 'middle' };
+      }
+    };
+
+    // ── Helper: merge a full row ──────────────────────────────────────────────
+    const mergeRow = (row) => {
+      const n = row.number;
+      ws.mergeCells(`A${n}:N${n}`);
+      row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+    };
+
+    // ── Row 1: Title ──────────────────────────────────────────────────────────
+    const titleRow = ws.addRow([`Seguimiento de Plazos — La Pampina`]);
+    titleRow.height = 26;
+    fillRow(titleRow, 'FF1E40AF', 'FFFFFFFF', true, 13);
+    mergeRow(titleRow);
+
+    // ── Row 2: Metadata ───────────────────────────────────────────────────────
+    const metaRow = ws.addRow([`Fecha de corte: ${fmtDate(cutDate)}  |  Semana: ${D.meta.dataWeek || '—'}  |  Próximas: ${weeks} semanas`]);
+    metaRow.height = 18;
+    fillRow(metaRow, 'FFE0E7FF', 'FF3730A3', false, 10);
+    mergeRow(metaRow);
+
+    ws.addRow([]); // spacer
+
+    // ── Section configs ───────────────────────────────────────────────────────
+    const secCfg = {
+      notStarted: { hdrBg: 'FFFEE2E2', hdrFg: 'FFDC2626', rowBg: 'FFFFF5F5', label: 'No iniciadas' },
+      behind:     { hdrBg: 'FFFEF3C7', hdrFg: 'FFB45309', rowBg: 'FFFEFCE8', label: 'Con atraso'   },
+      upcoming:   { hdrBg: 'FFDBEAFE', hdrFg: 'FF1D4ED8', rowBg: 'FFEFF6FF', label: 'Próximas'     },
+    };
+
+    const COL_HDRS = ['#', 'Actividad', 'EDT', 'Inicio', 'Fin', 'H-H',
+                      '% Plan', '% Real', '% Desvío',
+                      'Incid Total', 'Incid Plan', 'Incid Real', 'Incid Desvío', 'Días'];
+
+    // ── Build rows per area ───────────────────────────────────────────────────
+    for (const area of areas) {
+      const prefix = area.edt + '.';
+      const leaves = D.allLeaves.filter(r => r.edt.startsWith(prefix) || r.edt === area.edt);
+
+      const notStarted = leaves.filter(r =>
+        r.inicio && r.inicio <= cutDate && r.pctCompReal === 0 && r.incidencia > 0
+      ).sort((a, b) => a.inicio.localeCompare(b.inicio));
+
+      const startedLate = leaves.filter(r =>
+        r.pctCompReal > 0 && r.pctCompReal < 0.995 &&
+        r.inicio && r.inicio <= cutDate &&
+        r.pctCompPlan > r.pctCompReal + 0.005 && r.incidencia > 0
+      ).sort((a, b) => a.inicio.localeCompare(b.inicio));
+
+      const upcoming = leaves.filter(r =>
+        r.inicio && r.inicio > cutDate && r.inicio <= futureCut && r.incidencia > 0
+      ).sort((a, b) => a.inicio.localeCompare(b.inicio));
+
+      const total = notStarted.length + startedLate.length + upcoming.length;
+      const show = statusF === 'all'
+        || (statusF === 'notStarted' && notStarted.length > 0)
+        || (statusF === 'behind'     && startedLate.length > 0)
+        || (statusF === 'upcoming'   && upcoming.length > 0)
+        || (statusF === 'ok'         && total === 0);
+      if (!show) continue;
+
+      // Area header
+      const areaRow = ws.addRow([`${area.edt}   ${area.tarea.trim()}`]);
+      areaRow.height = 22;
+      fillRow(areaRow, 'FF1E293B', 'FFFFFFFF', true, 11);
+      mergeRow(areaRow);
+
+      // Sections
+      const sections = [
+        { key: 'notStarted', rows: notStarted, extra: 'late'     },
+        { key: 'behind',     rows: startedLate, extra: ''        },
+        { key: 'upcoming',   rows: upcoming,    extra: 'upcoming' },
+      ];
+
+      for (const sec of sections) {
+        if (!(statusF === 'all' || statusF === sec.key)) continue;
+        if (!sec.rows.length) continue;
+
+        const cfg = secCfg[sec.key];
+
+        // Sub-section header
+        const subHdr = ws.addRow([`  ${cfg.label}  (${sec.rows.length})`]);
+        subHdr.height = 18;
+        fillRow(subHdr, cfg.hdrBg, cfg.hdrFg, true, 10);
+        mergeRow(subHdr);
+
+        // Column headers
+        const colHdrRow = ws.addRow(COL_HDRS);
+        colHdrRow.height = 16;
+        colHdrRow.eachCell((cell, ci) => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+          cell.font = { bold: true, size: 9, color: { argb: 'FF475569' } };
+          cell.alignment = { horizontal: ci === 2 ? 'left' : 'center', vertical: 'middle' };
+          cell.border = { bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
+        });
+
+        // Data rows
+        sec.rows.forEach((r, i) => {
+          const pctR      = sec.key === 'notStarted' ? 0 : r.pctCompReal;
+          const desv      = pctR - r.pctCompPlan;
+          const incidPlan = r.incidencia * r.pctCompPlan;
+          const incidReal = r.incidencia * pctR;
+          const incidDesv = r.incidencia * desv;
+          const overdue   = sec.key === 'behind' && r.fin && r.fin <= cutDate;
+
+          const extraVal = sec.key === 'notStarted' ? `${_dateDiffDays(cutDate, r.inicio)}d`
+                         : sec.key === 'upcoming'   ? `${_dateDiffDays(r.inicio, cutDate)}d`
+                         : '';
+
+          const dataRow = ws.addRow([
+            i + 1,
+            r.tarea.trim() + (overdue ? '  ⚠ VENCIDA' : ''),
+            r.edt,
+            fmtDate(r.inicio),
+            fmtDate(r.fin),
+            Math.round(r.hh),
+            +((r.pctCompPlan * 100).toFixed(2)),
+            +((pctR * 100).toFixed(2)),
+            +((desv * 100).toFixed(2)),
+            +((r.incidencia * 100).toFixed(4)),
+            +((incidPlan * 100).toFixed(4)),
+            +((incidReal * 100).toFixed(4)),
+            +((incidDesv * 100).toFixed(4)),
+            extraVal,
+          ]);
+          dataRow.height = 15;
+
+          const evenBg  = i % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+          const rowBgAr = overdue ? 'FFFFF5F5' : evenBg;
+
+          dataRow.eachCell((cell, ci) => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBgAr } };
+            cell.font = { size: 10, color: { argb: 'FF1E293B' } };
+            cell.alignment = { vertical: 'middle', horizontal: ci === 2 ? 'left' : 'center' };
+            cell.border = { bottom: { style: 'hair', color: { argb: 'FFCBD5E1' } } };
+          });
+
+          // Number format for percentage columns
+          [7, 8, 9, 10, 11, 12, 13].forEach(ci => {
+            dataRow.getCell(ci).numFmt = '0.00"%"';
+          });
+
+          // Color deviation cells
+          const dCell = dataRow.getCell(9);
+          if      (desv < -0.0001) dCell.font = { size: 10, bold: true, color: { argb: 'FFDC2626' } };
+          else if (desv >  0.0001) dCell.font = { size: 10, bold: true, color: { argb: 'FF16A34A' } };
+
+          const idCell = dataRow.getCell(13);
+          if      (incidDesv < -0.000001) idCell.font = { size: 10, color: { argb: 'FFDC2626' } };
+          else if (incidDesv >  0.000001) idCell.font = { size: 10, color: { argb: 'FF16A34A' } };
+
+          // Color days cell
+          const daysCell = dataRow.getCell(14);
+          if (sec.key === 'notStarted') daysCell.font = { size: 10, bold: true, color: { argb: 'FFDC2626' } };
+          else if (sec.key === 'upcoming') daysCell.font = { size: 10, color: { argb: 'FF1D4ED8' } };
+        });
+      }
+
+      ws.addRow([]); // area separator
+    }
+
+    // ── Generate and download ─────────────────────────────────────────────────
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob   = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url    = URL.createObjectURL(blob);
+    const a      = document.createElement('a');
+    a.href       = url;
+    a.download   = `Plazos_LaPampina_${D.meta.dataWeek || fmtDate(cutDate).replace(/\//g,'-')}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+  } catch(e) {
+    console.error('exportPlazosXLSX error:', e);
+    alert('Error al exportar: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+  }
+}
+
 function togglePlCard(hdr) {
   const body    = hdr.nextElementSibling;
   const chevron = hdr.querySelector('.pl-chevron');

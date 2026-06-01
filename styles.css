@@ -978,6 +978,15 @@ tr:hover td{background:var(--surface-2)}
   background:transparent;color:var(--primary);
 }
 .btn-pdf-outline:hover{background:var(--primary);color:#fff}
+.btn-excel{
+  background:#16a34a;color:#fff;border:1px solid #16a34a;
+  border-radius:var(--radius);padding:6px 13px;
+  cursor:pointer;font-size:12px;font-weight:700;
+  white-space:nowrap;letter-spacing:.02em;
+  transition:background var(--t),opacity var(--t);
+}
+.btn-excel:hover{background:#15803d;border-color:#15803d}
+.btn-excel:disabled{opacity:.55;cursor:wait}
 .pdf-btn-group{display:flex;gap:4px;align-items:center}
 
 
