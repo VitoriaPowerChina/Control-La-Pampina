@@ -3863,7 +3863,7 @@ function _simTabCalcRow(row) {
   const leaf = _simTabGetLeaves().find(r => r.edt === row.edt)
             || (D ? D.allLeaves.find(r => r.edt === row.edt) : null);
   if (!leaf) return null;
-  const isPB  = !!leaf.isConsolidated;
+  const isPB  = !!leaf.isConsolidated || (leaf.pbTotal != null && leaf.pbTotal > 0);
   const delta = row.delta || 0;
   if (isPB && row.mode === 'pb') {
     const maxD    = Math.max(0, leaf.pbTotal - leaf.pbAv);
@@ -4064,13 +4064,40 @@ function toISODate(d) {
 
 function _simTabAdd() {
   const edt = _simActSelectedEdt || document.getElementById('simtabActSelect')?.value;
-  if (!edt || _simTabRows.find(r => r.edt === edt)) return;
-  const leaf = _simTabGetLeaves().find(r => r.edt === edt);
-  if (!leaf) return;
-  const isPB = !!leaf.isConsolidated;
-  const mode = isPB ? _simTabMode : 'pct';
+
+  if (!edt) {
+    showToast('Selecione uma atividade primeiro', true);
+    return;
+  }
+
+  // Already in scenario?
+  if (_simTabRows.find(r => r.edt === edt)) {
+    showToast('Esta atividade já está no cenário', true);
+    return;
+  }
+
+  // Look in _simTabGetLeaves() first, then fall back to D.allLeaves
+  const leaf = _simTabGetLeaves().find(r => r.edt === edt)
+            || (D ? D.allLeaves.find(r => r.edt === edt) : null);
+
+  if (!leaf) {
+    showToast(`Atividade ${edt} não encontrada nos dados carregados`, true);
+    return;
+  }
+
+  // PB mode is available if the leaf is consolidated OR has pbTotal data
+  const isPB  = !!leaf.isConsolidated || (leaf.pbTotal != null && leaf.pbTotal > 0);
+  const mode  = isPB ? _simTabMode : 'pct';
   const delta = parseFloat(document.getElementById('simtabDelta')?.value) || 0;
   _simTabRows.push({ edt, delta, mode });
+
+  // Inform user if they chose PB but the activity has no PB data
+  if (!isPB && _simTabMode === 'pb') {
+    showToast(`"${leaf.tarea?.trim()}" não tem PBs — adicionada em modo % de avance automaticamente`);
+  } else {
+    showToast(`"${leaf.tarea?.trim()}" adicionada ao cenário (${mode === 'pb' ? 'PB' : '% avance'})`);
+  }
+
   // Clear selection after adding
   _simActSelectedEdt = '';
   const badge = document.getElementById('simActSelectedBadge');
@@ -4575,15 +4602,29 @@ function autoScSelectTop(n) {
 /** Add all selected auto-scenario rows to the simulation */
 function addAutoScToSimulation() {
   const toAdd = _autoScRows.filter(r => r.selected);
-  if (!toAdd.length) { showToast && showToast('Nenhuma atividade selecionada', true); return; }
+  if (!toAdd.length) { showToast('Nenhuma atividade selecionada — marque pelo menos uma ☑', true); return; }
+
   const addedEdts = new Set(_simTabRows.map(r => r.edt));
+  let added = 0, skipped = 0;
+
   toAdd.forEach(r => {
-    if (!addedEdts.has(r.edt)) {
-      _simTabRows.push({ edt: r.edt, delta: 0, mode: r.isConsolidated ? 'pb' : 'pct' });
-    }
+    if (addedEdts.has(r.edt)) { skipped++; return; }
+    // Validate the leaf exists (same fallback as _simTabCalcRow)
+    const leaf = _simTabGetLeaves().find(l => l.edt === r.edt)
+              || (D ? D.allLeaves.find(l => l.edt === r.edt) : null);
+    if (!leaf) { skipped++; return; }
+    const hasPB = !!leaf.isConsolidated || (leaf.pbTotal != null && leaf.pbTotal > 0);
+    _simTabRows.push({ edt: r.edt, delta: 0, mode: hasPB ? 'pb' : 'pct' });
+    addedEdts.add(r.edt);
+    added++;
   });
+
   renderSimTab();
-  showToast && showToast(`${toAdd.length} atividades adicionadas ao cenário`);
+  const msg = added
+    ? `${added} atividade${added > 1 ? 's' : ''} adicionada${added > 1 ? 's' : ''} ao cenário` +
+      (skipped ? ` · ${skipped} ignorada${skipped > 1 ? 's' : ''} (já no cenário ou não encontradas)` : '')
+    : 'Nenhuma atividade adicionada — verifique se já estão no cenário';
+  showToast(msg, added === 0);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
