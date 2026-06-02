@@ -1479,21 +1479,65 @@ tr:hover td{background:var(--surface-2)}
 }
 .simtab-act-sel:focus{outline:none;border-color:var(--primary)}
 
-/* Status + activity selector — side by side */
-.simtab-act-row{
-  display:flex;gap:8px;align-items:stretch;
+/* Simulation act filter bar */
+.sim-act-filters{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin-bottom:8px;
+}
+.sim-act-search{
+  flex:1;min-width:120px;height:32px;padding:0 8px;
+  border:1.5px solid var(--border);border-radius:var(--radius);
+  background:var(--surface-2);color:var(--text);font-size:12px;
 }
 .simtab-status-sel{
-  flex:0 0 140px;     /* fixed width for the status pill */
-  height:36px;padding:0 8px;
+  height:32px;padding:0 8px;
   border:1.5px solid var(--border);border-radius:var(--radius);
   background:var(--surface);color:var(--text);
-  font-size:12px;font-weight:600;
-  transition:border-color var(--t);cursor:pointer;
+  font-size:12px;font-weight:600;cursor:pointer;
 }
 .simtab-status-sel:focus{outline:none;border-color:var(--primary)}
-/* Activity selector expands to fill the rest */
-.simtab-act-row .simtab-act-sel{flex:1;width:auto}
+
+/* Selected activity badge */
+.sim-act-badge{
+  display:flex;align-items:center;gap:6px;
+  background:var(--primary-l);border:1px solid var(--primary);
+  border-radius:var(--radius);padding:5px 10px;
+  font-size:12px;font-weight:600;color:var(--primary);
+  margin-bottom:8px;
+}
+.sim-act-badge i{flex-shrink:0;}
+.sim-act-badge-clear{
+  margin-left:auto;background:none;border:none;cursor:pointer;
+  color:var(--text-muted);font-size:12px;padding:0 2px;
+}
+.sim-act-badge-clear:hover{color:var(--danger)}
+
+/* Scrollable activity list */
+.sim-act-list{
+  max-height:280px;overflow-y:auto;
+  border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface-2);
+}
+.sim-pl-card .pl-card-hdr{font-size:12px;padding:7px 10px;}
+.sim-pl-card .pl-card-body{padding:0;}
+.sim-pl-card .grid-wrap{max-height:none;border:none;box-shadow:none;border-radius:0;margin-bottom:0;}
+.sim-pl-card table{font-size:11px;}
+.sim-pl-card thead th{padding:4px 7px;font-size:11px;}
+.sim-pl-card tbody td{padding:4px 7px;}
+
+/* Activity row hover / selected */
+.sim-act-row{cursor:pointer;transition:background var(--t)}
+.sim-act-row:hover{background:var(--primary-l) !important;}
+.sim-act-row-selected{background:var(--primary-l) !important;font-weight:600;}
+.sim-act-row-added { opacity:.5; cursor:default; }
+.sim-act-added-tag { font-size:10px; color:var(--success); font-weight:600; }
+.sim-act-add-btn{
+  background:var(--primary);color:#fff;border:none;
+  border-radius:4px;width:22px;height:22px;
+  cursor:pointer;font-size:13px;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+}
+.sim-act-add-btn:hover{background:var(--primary-d);}
 
 .simtab-mode-bar{
   display:flex;

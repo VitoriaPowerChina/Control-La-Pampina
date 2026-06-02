@@ -3886,7 +3886,7 @@ function setupSimTab() {
   on('simtabAddBtn',  'click',  _simTabAdd);
   on('simtabModePB',  'click',  () => _simTabSetMode('pb'));
   on('simtabModePct', 'click',  () => _simTabSetMode('pct'));
-  on('simtabScope',   'change', () => _simTabPopulateActSelect());
+  on('simtabScope',   'change', () => renderSimActList());
 }
 
 function _simTabSetMode(mode) {
@@ -3901,47 +3901,150 @@ function _simTabSetMode(mode) {
   if (inp)  inp.step         = mode === 'pb' ? '1' : '0.5';
 }
 
-function _simTabPopulateActSelect() {
-  const sel       = document.getElementById('simtabActSelect');
-  const statusFlt = document.getElementById('simtabStatusFilter')?.value || '';
-  if (!sel || !D) return;
+// ── Simulation activity list (Prazos-style) ───────────────────────────────────
+let _simActSelectedEdt = '';
 
-  const added  = new Set(_simTabRows.map(r => r.edt));
-  let   leaves = _simTabGetLeaves().filter(r => !added.has(r.edt));
+/** Render the activity accordion list, mirroring renderPlazos() */
+function renderSimActList() {
+  const container = document.getElementById('simActList');
+  if (!container || !D) return;
 
-  // ── Filter by status (same categories as Prazos tab) ──────────────────
-  if (statusFlt) {
-    const dataDate = D.meta?.dataDate ? new Date(D.meta.dataDate) : new Date();
-    const cutISO   = toISODate(dataDate);
-    const soon     = toISODate(new Date(dataDate.getTime() + 30 * 86400000)); // 30 days ahead
+  // ── Use EXACTLY the same filter inputs as renderPlazos ────────────────
+  // This guarantees the same activities appear in both tabs.
+  const cutDate  = D.meta.dataDate;
+  const weeks    = Math.max(1, parseInt(
+    document.getElementById('simActWeeks')?.value ||
+    document.getElementById('plUpWeeks')?.value   || '4'
+  ));
+  const futureCut = _isoAddDays(cutDate, weeks * 7);
+  // Sync simActWeeks display if plUpWeeks was used as fallback
+  const wInput = document.getElementById('simActWeeks');
+  if (wInput && !wInput.value) wInput.value = weeks;
 
-    leaves = leaves.filter(r => {
-      switch (statusFlt) {
-        case 'notStarted':
-          // planned but real = 0 (and not upcoming — already past start or no start)
-          return r.pctCompReal === 0 && r.pctCompPlan > 0 &&
-                 (!r.inicio || r.inicio <= cutISO);
-        case 'late':
-          // started but behind plan
-          return r.pctCompReal > 0 && r.pctCompReal < r.pctCompPlan;
-        case 'upcoming':
-          // not yet started AND start date is in the next 30 days
-          return r.pctCompReal === 0 && r.inicio && r.inicio > cutISO && r.inicio <= soon;
-        case 'ok':
-          // on track: real ≥ plan (or completed)
-          return r.pctCompReal >= r.pctCompPlan;
-        default:
-          return true;
-      }
-    });
-  }
+  const q       = (document.getElementById('simActSearch')?.value || '').toLowerCase();
+  const statusF = document.getElementById('simActStatusFilter')?.value || 'all';
+  const added   = new Set(_simTabRows.map(r => r.edt));
 
-  sel.innerHTML = `<option value="">${t('sim.selectAct')}</option>`
-    + leaves.map(r => {
-      const tag = r.isConsolidated ? ` [PB×${r.pbTotal}]` : ' [Reg]';
-      return `<option value="${r.edt}">${r.tarea.trim()}${tag}</option>`;
+  const areas = D.areas
+    .filter(a => a.nivel === 3 && a.incidencia > 0)
+    .filter(a => !q || a.tarea.toLowerCase().includes(q) || a.edt.toLowerCase().includes(q))
+    .sort((a, b) => a.edt.localeCompare(b.edt));
+
+  const cards = areas.map(area => {
+    const prefix = area.edt + '.';
+
+    // Use ALL leaves (same as Prazos) — do NOT exclude added activities from categories
+    const allLeaves   = D.allLeaves.filter(r => r.edt.startsWith(prefix) || r.edt === area.edt);
+    // Available leaves (not yet in scenario) — used for the add buttons only
+    const availLeaves = allLeaves.filter(r => !added.has(r.edt));
+
+    // Category calculations use allLeaves — IDENTICAL to renderPlazos
+    const notStarted  = allLeaves.filter(r =>
+      r.inicio && r.inicio <= cutDate && r.pctCompReal === 0 && r.incidencia > 0
+    ).sort((a, b) => a.inicio.localeCompare(b.inicio));
+
+    const startedLate = allLeaves.filter(r =>
+      r.pctCompReal > 0 && r.pctCompReal < 0.995 &&
+      r.inicio && r.inicio <= cutDate &&
+      r.pctCompPlan > r.pctCompReal + 0.005 &&
+      r.incidencia > 0
+    ).sort((a, b) => a.inicio.localeCompare(b.inicio));
+
+    const upcoming    = allLeaves.filter(r =>
+      r.inicio && r.inicio > cutDate && r.inicio <= futureCut && r.incidencia > 0
+    ).sort((a, b) => a.inicio.localeCompare(b.inicio));
+
+    const total = notStarted.length + startedLate.length + upcoming.length;
+
+    // Show/hide logic IDENTICAL to renderPlazos
+    const show = statusF === 'all'
+      || (statusF === 'notStarted' && notStarted.length  > 0)
+      || (statusF === 'behind'     && startedLate.length > 0)
+      || (statusF === 'upcoming'   && upcoming.length    > 0)
+      || (statusF === 'ok'         && total === 0);
+    if (!show) return '';
+
+    // Rows to display (from ALL leaves — same as Prazos shows)
+    const displayRows = statusF === 'all'        ? [...notStarted, ...startedLate, ...upcoming]
+                      : statusF === 'notStarted' ? notStarted
+                      : statusF === 'behind'     ? startedLate
+                      : statusF === 'upcoming'   ? upcoming
+                      : allLeaves.filter(r => r.pctCompReal >= r.pctCompPlan);
+
+    if (!displayRows.length) return '';
+
+    const rowsHtml = displayRows.map(r => {
+      const isAdded = added.has(r.edt);
+      const isSel   = r.edt === _simActSelectedEdt;
+      const cls     = isAdded ? ' sim-act-row-added' : isSel ? ' sim-act-row-selected' : '';
+      const btn     = isAdded
+        ? `<span class="sim-act-added-tag">✓ adicionado</span>`
+        : `<button class="sim-act-add-btn" onclick="event.stopPropagation();simActSelectRow('${r.edt}','${r.tarea.trim().replace(/'/g,"\\'")}')">
+             ${isSel ? '✓' : '+'}
+           </button>`;
+      const escapedEdt  = r.edt.replace(/'/g, "\\'");
+      const escapedName = r.tarea.trim().replace(/'/g, "\\'");
+      return `<tr class="sim-act-row${cls}"
+               onclick="${isAdded ? '' : `simActSelectRow('${escapedEdt}','${escapedName}')`}">
+        <td class="left" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            title="${r.tarea.trim()}">${r.tarea.trim()}</td>
+        <td>${r.edt}</td>
+        <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
+        <td class="${devClass(r.pctCompReal - r.pctCompPlan)}">${pct(r.pctCompReal)}</td>
+        <td>${pct(r.pctCompPlan)}</td>
+        <td>${btn}</td>
+      </tr>`;
     }).join('');
+
+    const badgesHtml = `
+      ${notStarted.length  ? `<span class="pl-badge pl-badge-late">${notStarted.length} No iniciadas</span>`  : ''}
+      ${startedLate.length ? `<span class="pl-badge pl-badge-behind">${startedLate.length} c/ atraso</span>`  : ''}
+      ${upcoming.length    ? `<span class="pl-badge pl-badge-up">${upcoming.length} Próximas</span>`           : ''}
+      ${total === 0        ? `<span class="pl-badge pl-badge-ok">✓ Sin alertas</span>`                         : ''}`;
+
+    return `<div class="pl-card sim-pl-card">
+      <div class="pl-card-hdr" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none';this.querySelector('.pl-chevron').style.transform=this.nextElementSibling.style.display===''?'rotate(90deg)':''">
+        <i class="bi bi-chevron-right pl-chevron"></i>
+        <span class="pl-card-edt">${area.edt}</span>
+        <span class="pl-card-name">${area.tarea.trim()}</span>
+        <div class="pl-card-badges">${badgesHtml}</div>
+      </div>
+      <div class="pl-card-body" style="display:none">
+        <div class="grid-wrap"><table>
+          <thead><tr>
+            <th class="left">Atividade</th><th>EDT</th>
+            <th>Início</th><th>Fin</th>
+            <th>% Real</th><th>% Plan</th><th></th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  container.innerHTML = cards || `<p class="plazos-empty">✓ ${t('pl.noAlerts')}</p>`;
 }
+
+/** Select an activity from the list */
+function simActSelectRow(edt, name) {
+  _simActSelectedEdt = edt;
+  const badge    = document.getElementById('simActSelectedBadge');
+  const badgeName= document.getElementById('simActSelectedName');
+  if (badge)    badge.style.display = '';
+  if (badgeName) badgeName.textContent = name;
+  renderSimActList();  // refresh to show checkmark
+}
+
+/** Clear current selection */
+function simActClearSelection() {
+  _simActSelectedEdt = '';
+  const badge = document.getElementById('simActSelectedBadge');
+  if (badge) badge.style.display = 'none';
+  renderSimActList();
+}
+
+/** Legacy no-op — kept for compatibility */
+function _simTabPopulateActSelect() {}
 
 /** ISO date string from a Date object */
 function toISODate(d) {
@@ -3951,14 +4054,18 @@ function toISODate(d) {
 }
 
 function _simTabAdd() {
-  const edt = document.getElementById('simtabActSelect')?.value;
+  const edt = _simActSelectedEdt || document.getElementById('simtabActSelect')?.value;
   if (!edt || _simTabRows.find(r => r.edt === edt)) return;
   const leaf = _simTabGetLeaves().find(r => r.edt === edt);
   if (!leaf) return;
   const isPB = !!leaf.isConsolidated;
-  const mode = isPB ? _simTabMode : 'pct'; // non-PB always uses pct mode
+  const mode = isPB ? _simTabMode : 'pct';
   const delta = parseFloat(document.getElementById('simtabDelta')?.value) || 0;
   _simTabRows.push({ edt, delta, mode });
+  // Clear selection after adding
+  _simActSelectedEdt = '';
+  const badge = document.getElementById('simActSelectedBadge');
+  if (badge) badge.style.display = 'none';
   const deltaEl = document.getElementById('simtabDelta');
   if (deltaEl) deltaEl.value = '0';
   renderSimTab();
@@ -4206,7 +4313,7 @@ function renderSimTab() {
   _simTabUpdateKPIs();
   _renderSimTabTable();
   _renderSimTabChart();
-  _simTabPopulateActSelect();
+  renderSimActList();   // refresh activity list (marks added activities as unavailable)
 }
 
 // ── Deviation Recovery Simulator ─────────────────────────────────────────────

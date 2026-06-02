@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=6.0">
+  <link rel="stylesheet" href="styles.css?v=6.2">
   <script src="i18n.js?v=2.0"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -634,18 +634,32 @@
 
                 <div class="simtab-step">
                   <div class="simtab-step-lbl" data-i18n-html="sim.step1">1.&nbsp; Seleccionar actividad</div>
-                  <div class="simtab-act-row">
-                    <select id="simtabStatusFilter" class="simtab-status-sel" onchange="_simTabPopulateActSelect()">
-                      <option value=""         data-i18n="pl.filterAll">Todas</option>
+
+                  <!-- Filter bar (mirrors Prazos) -->
+                  <div class="sim-act-filters">
+                    <input id="simActSearch" type="search" placeholder="Buscar área o actividad…" oninput="renderSimActList()" class="sim-act-search">
+                    <select id="simActStatusFilter" class="simtab-status-sel" onchange="renderSimActList()">
+                      <option value="all"        data-i18n="pl.filterAll">Todas</option>
                       <option value="notStarted" data-i18n="pl.filterNotStarted">No iniciadas</option>
-                      <option value="late"      data-i18n="pl.filterBehind">c/ atraso</option>
-                      <option value="upcoming"  data-i18n="pl.filterUpcoming">Próximas</option>
-                      <option value="ok"        data-i18n="pl.filterOk">Sin alertas</option>
+                      <option value="behind"     data-i18n="pl.filterBehind">c/ atraso</option>
+                      <option value="upcoming"   data-i18n="pl.filterUpcoming">Próximas</option>
+                      <option value="ok"         data-i18n="pl.filterOk">Sin alertas</option>
                     </select>
-                    <select id="simtabActSelect" class="simtab-act-sel">
-                      <option value="">Selecione uma atividade</option>
-                    </select>
+                    <label class="plazos-weeks-lbl" style="font-size:11px">
+                      <span data-i18n="pl.weeksLbl">Próximas semanas:</span>
+                      <input id="simActWeeks" type="number" min="1" max="52" value="4" class="plazos-weeks-inp" oninput="renderSimActList()">
+                    </label>
                   </div>
+
+                  <!-- Selected activity badge -->
+                  <div id="simActSelectedBadge" class="sim-act-badge" style="display:none">
+                    <i class="bi bi-check-circle-fill"></i>
+                    <span id="simActSelectedName">—</span>
+                    <button class="sim-act-badge-clear" onclick="simActClearSelection()" title="Deseleccionar">✕</button>
+                  </div>
+
+                  <!-- Accordion list (Prazos-style) -->
+                  <div id="simActList" class="sim-act-list"></div>
                 </div>
 
                 <div class="simtab-step">
@@ -991,6 +1005,6 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-<script src="app.js?v=8.6"></script>
+<script src="app.js?v=8.8"></script>
 </body>
 </html>
