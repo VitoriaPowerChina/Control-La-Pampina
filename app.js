@@ -3902,15 +3902,52 @@ function _simTabSetMode(mode) {
 }
 
 function _simTabPopulateActSelect() {
-  const sel = document.getElementById('simtabActSelect');
+  const sel       = document.getElementById('simtabActSelect');
+  const statusFlt = document.getElementById('simtabStatusFilter')?.value || '';
   if (!sel || !D) return;
-  const added = new Set(_simTabRows.map(r => r.edt));
-  const leaves = _simTabGetLeaves().filter(r => !added.has(r.edt));
+
+  const added  = new Set(_simTabRows.map(r => r.edt));
+  let   leaves = _simTabGetLeaves().filter(r => !added.has(r.edt));
+
+  // ── Filter by status (same categories as Prazos tab) ──────────────────
+  if (statusFlt) {
+    const dataDate = D.meta?.dataDate ? new Date(D.meta.dataDate) : new Date();
+    const cutISO   = toISODate(dataDate);
+    const soon     = toISODate(new Date(dataDate.getTime() + 30 * 86400000)); // 30 days ahead
+
+    leaves = leaves.filter(r => {
+      switch (statusFlt) {
+        case 'notStarted':
+          // planned but real = 0 (and not upcoming — already past start or no start)
+          return r.pctCompReal === 0 && r.pctCompPlan > 0 &&
+                 (!r.inicio || r.inicio <= cutISO);
+        case 'late':
+          // started but behind plan
+          return r.pctCompReal > 0 && r.pctCompReal < r.pctCompPlan;
+        case 'upcoming':
+          // not yet started AND start date is in the next 30 days
+          return r.pctCompReal === 0 && r.inicio && r.inicio > cutISO && r.inicio <= soon;
+        case 'ok':
+          // on track: real ≥ plan (or completed)
+          return r.pctCompReal >= r.pctCompPlan;
+        default:
+          return true;
+      }
+    });
+  }
+
   sel.innerHTML = `<option value="">${t('sim.selectAct')}</option>`
     + leaves.map(r => {
       const tag = r.isConsolidated ? ` [PB×${r.pbTotal}]` : ' [Reg]';
       return `<option value="${r.edt}">${r.tarea.trim()}${tag}</option>`;
     }).join('');
+}
+
+/** ISO date string from a Date object */
+function toISODate(d) {
+  return d.getFullYear() + '-'
+    + String(d.getMonth() + 1).padStart(2, '0') + '-'
+    + String(d.getDate()).padStart(2, '0');
 }
 
 function _simTabAdd() {

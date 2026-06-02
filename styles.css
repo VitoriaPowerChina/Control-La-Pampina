@@ -1010,10 +1010,15 @@ tr:hover td{background:var(--surface-2)}
 .cascade-sel:hover{border-color:var(--primary)}
 
 #arbolWrap{
-  overflow:auto;max-height:58vh;
+  overflow:auto;
+  /* Fill from header to bottom of viewport:
+     58px topbar + 52px kpi-strip + 20px content-padding-top
+     + ~62px tab-header + 16px margin-bottom = ~210px */
+  height:calc(100vh - 210px);
+  max-height:calc(100vh - 210px);
   border-radius:var(--radius-lg);
   box-shadow:var(--shadow);border:1px solid var(--border);
-  margin-bottom:24px;
+  margin-bottom:0;
 }
 #arbolWrap table{min-width:1320px}
 
@@ -1473,6 +1478,22 @@ tr:hover td{background:var(--surface-2)}
   transition:border-color var(--t);
 }
 .simtab-act-sel:focus{outline:none;border-color:var(--primary)}
+
+/* Status + activity selector — side by side */
+.simtab-act-row{
+  display:flex;gap:8px;align-items:stretch;
+}
+.simtab-status-sel{
+  flex:0 0 140px;     /* fixed width for the status pill */
+  height:36px;padding:0 8px;
+  border:1.5px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);color:var(--text);
+  font-size:12px;font-weight:600;
+  transition:border-color var(--t);cursor:pointer;
+}
+.simtab-status-sel:focus{outline:none;border-color:var(--primary)}
+/* Activity selector expands to fill the rest */
+.simtab-act-row .simtab-act-sel{flex:1;width:auto}
 
 .simtab-mode-bar{
   display:flex;
