@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=6.2">
+  <link rel="stylesheet" href="styles.css?v=6.8">
   <script src="i18n.js?v=2.0"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -576,6 +576,140 @@
         </div>
       </div>
 
+      <!-- Sub-tab bar -->
+      <div class="sim-subtab-bar">
+        <button class="sim-subtab active" id="simst-manual" onclick="switchSimSubTab('manual')">
+          <i class="bi bi-sliders"></i> Simulador Manual
+        </button>
+        <button class="sim-subtab" id="simst-auto" onclick="switchSimSubTab('auto')">
+          <i class="bi bi-stars"></i> Gerador Automático
+        </button>
+        <button class="sim-subtab" id="simst-smart" onclick="switchSimSubTab('smart')">
+          <i class="bi bi-diagram-3"></i> Cenários Inteligentes
+        </button>
+      </div>
+
+      <!-- ══ SUB-TAB: AUTO SCENARIO ═══════════════════════════════ -->
+      <div id="simPane-auto" style="display:none">
+        <div class="simtab-panel simtab-auto-panel" style="margin-top:0;border-radius:0 var(--radius-lg) var(--radius-lg) var(--radius-lg)">
+            <div class="simtab-ph auto-ph">
+              <i class="bi bi-stars"></i> GERADOR AUTOMÁTICO DE CENÁRIOS
+              <span class="auto-ph-sub">O sistema ranqueia as atividades por potencial de recuperação</span>
+            </div>
+
+            <!-- Config -->
+            <div class="simtab-auto-cfg">
+              <!-- Type buttons -->
+              <div class="auto-type-bar">
+                <button class="auto-type-btn auto-type-active" data-atype="notStarted" onclick="setAutoType('notStarted')">
+                  <i class="bi bi-clock-history"></i> Não iniciadas
+                </button>
+                <button class="auto-type-btn" data-atype="behind" onclick="setAutoType('behind')">
+                  <i class="bi bi-exclamation-triangle"></i> Atrasadas
+                </button>
+                <button class="auto-type-btn" data-atype="mixed" onclick="setAutoType('mixed')">
+                  <i class="bi bi-shuffle"></i> Misto
+                </button>
+              </div>
+              <!-- Params row -->
+              <div class="auto-params-row">
+                <label class="auto-param-lbl">
+                  <i class="bi bi-calendar-week"></i> Horizonte
+                  <input type="number" id="autoWeeks" value="4" min="1" max="52" class="auto-param-inp">
+                  <span>sem.</span>
+                </label>
+                <label class="auto-param-lbl">
+                  <i class="bi bi-list-ol"></i> Máx. ativ.
+                  <input type="number" id="autoMaxActs" value="50" min="1" max="200" class="auto-param-inp">
+                </label>
+                <button class="simtab-btn-primary auto-gen-btn" onclick="generateAutoScenario()">
+                  <i class="bi bi-stars"></i> Gerar
+                </button>
+              </div>
+            </div>
+
+            <!-- Results -->
+            <div id="autoScResults" style="display:none">
+              <div id="autoScTable" class="auto-sc-table-wrap"></div>
+              <div class="auto-sc-footer">
+                <div id="autoScSummary" class="auto-sc-summary"></div>
+                <div class="auto-sc-actions">
+                  <button class="simtab-btn-outline" onclick="autoScSelectAll(false)">☐ Nenhuma</button>
+                  <button class="simtab-btn-outline" onclick="autoScSelectAll(true)">☑ Todas</button>
+                  <button class="simtab-btn-outline" onclick="autoScSelectTop(5)">Top 5</button>
+                  <button class="simtab-btn-outline" onclick="autoScSelectTop(10)">Top 10</button>
+                  <button class="simtab-btn-primary" onclick="addAutoScToSimulation()">
+                    <i class="bi bi-plus-circle"></i> Adicionar selecionadas ao Cenário
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div><!-- /auto panel -->
+      </div><!-- /simPane-auto -->
+
+      <!-- ══ SUB-TAB: CENÁRIOS INTELIGENTES ════════════════════════ -->
+      <div id="simPane-smart" style="display:none">
+        <div class="simtab-panel smart-panel">
+
+          <!-- Config bar -->
+          <div class="smart-cfg-bar">
+            <!-- Scenario type -->
+            <div class="smart-type-group">
+              <span class="smart-cfg-lbl">Cenário:</span>
+              <button class="smart-type-btn smart-type-active" data-sc="1" onclick="setSmartScenario(1)">
+                1 · Não iniciadas
+              </button>
+              <button class="smart-type-btn" data-sc="2" onclick="setSmartScenario(2)">
+                2 · Misto
+              </button>
+              <button class="smart-type-btn" data-sc="3" onclick="setSmartScenario(3)">
+                3 · Mais rápido
+              </button>
+            </div>
+            <!-- Weeks target -->
+            <div class="smart-weeks-group">
+              <span class="smart-cfg-lbl"><i class="bi bi-calendar-week"></i> Recuperar em</span>
+              <input type="number" id="smartWeeks" value="10" min="1" max="52" class="auto-param-inp">
+              <span class="smart-cfg-lbl">semanas</span>
+            </div>
+            <button class="simtab-btn-primary" onclick="runSmartScenario()" style="margin-left:auto">
+              <i class="bi bi-diagram-3"></i> Gerar Cenário
+            </button>
+          </div>
+
+          <!-- Recovery target banner -->
+          <div id="smartRecTarget" class="smart-rec-target" style="display:none"></div>
+
+          <!-- Results -->
+          <div id="smartResults" style="display:none">
+
+            <!-- Summary cards -->
+            <div class="smart-summary-cards" id="smartSummaryCards"></div>
+
+            <!-- Activity table -->
+            <div class="smart-table-wrap" id="smartTableWrap"></div>
+
+            <!-- Footer actions -->
+            <div class="smart-footer">
+              <div id="smartFooterInfo" class="smart-footer-info"></div>
+              <button class="simtab-btn-primary" onclick="addSmartToSimulation()">
+                <i class="bi bi-plus-circle"></i> Adicionar executáveis ao Cenário
+              </button>
+            </div>
+          </div>
+
+          <!-- Empty state -->
+          <div id="smartEmpty" class="smart-empty">
+            <i class="bi bi-diagram-3" style="font-size:2rem;opacity:.3;display:block;margin-bottom:8px"></i>
+            Selecione o tipo de cenário e clique em <strong>Gerar Cenário</strong>
+          </div>
+
+        </div>
+      </div><!-- /simPane-smart -->
+
+      <!-- ══ SUB-TAB: MANUAL SIMULATOR ════════════════════════════ -->
+      <div id="simPane-manual">
+
       <!-- Body: left content + right sidebar -->
       <div class="simtab-body">
 
@@ -747,6 +881,7 @@
         </div><!-- /simtab-right -->
 
       </div><!-- /simtab-body -->
+      </div><!-- /simPane-manual -->
 
     </section><!-- /tab-simulador -->
 
@@ -1005,6 +1140,6 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-<script src="app.js?v=8.8"></script>
+<script src="app.js?v=10.0"></script>
 </body>
 </html>

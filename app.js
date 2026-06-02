@@ -3857,7 +3857,11 @@ function _simTabGetLeaves() {
 
 /** Calculate recovery for one _simTabRows entry */
 function _simTabCalcRow(row) {
-  const leaf = _simTabGetLeaves().find(r => r.edt === row.edt);
+  // Primary: look in simTab leaves (consolidated + non-zone regular)
+  // Fallback: look in all leaves so activities from auto-generator (which uses
+  // D.allLeaves like the Prazos tab) are also handled correctly.
+  const leaf = _simTabGetLeaves().find(r => r.edt === row.edt)
+            || (D ? D.allLeaves.find(r => r.edt === row.edt) : null);
   if (!leaf) return null;
   const isPB  = !!leaf.isConsolidated;
   const delta = row.delta || 0;
@@ -3992,6 +3996,9 @@ function renderSimActList() {
         <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
         <td class="${devClass(r.pctCompReal - r.pctCompPlan)}">${pct(r.pctCompReal)}</td>
         <td>${pct(r.pctCompPlan)}</td>
+        <td class="sim-falta-cell" title="Falta ${pct(1 - r.pctCompReal)} para 100%">
+          <strong>${pct(1 - r.pctCompReal)}</strong>
+        </td>
         <td>${btn}</td>
       </tr>`;
     }).join('');
@@ -4014,7 +4021,9 @@ function renderSimActList() {
           <thead><tr>
             <th class="left">Atividade</th><th>EDT</th>
             <th>Início</th><th>Fin</th>
-            <th>% Real</th><th>% Plan</th><th></th>
+            <th>% Real</th><th>% Plan</th>
+            <th title="Quanto falta para atingir 100%">Falta</th>
+            <th></th>
           </tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table></div>
@@ -4071,6 +4080,513 @@ function _simTabAdd() {
   renderSimTab();
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// AUTO SCENARIO GENERATOR
+// ════════════════════════════════════════════════════════════════════════════
+let _autoType   = 'notStarted';
+let _autoScRows = [];   // current generated rows { ...leaf, potential, selected }
+
+function switchSimSubTab(id) {
+  ['manual','auto','smart'].forEach(t => {
+    const pane = document.getElementById('simPane-' + t);
+    const btn  = document.getElementById('simst-' + t);
+    if (pane) pane.style.display = t === id ? '' : 'none';
+    if (btn)  btn.classList.toggle('active', t === id);
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CENÁRIOS INTELIGENTES — construction-logic-aware recovery planning
+// ════════════════════════════════════════════════════════════════════════════
+
+let _smartScType = 1;  // 1=notStarted, 2=mixed, 3=fastest
+
+// ── Construction sequence rules ──────────────────────────────────────────────
+// Each rule: { pred: /regex on task name/, blocks: /regex on task name/ }
+// If a task matches "blocks" AND a sibling matching "pred" is incomplete → BLOCKED
+const SMART_RULES = [
+  // Foundations before structures/installation
+  { pred: /fundaci|cimentaci|micropilot|microestaca/i,      blocks: /instalaci.*power|instalaci.*mvs|instalaci.*bess|montaje.*equip/i },
+  { pred: /fundaci/i,                                        blocks: /instalaci|estructura|montaje/i },
+  // Cable route sequence: excavation → mesh → conduit → cable → connection
+  { pred: /excav.*trinch|excav.*zanja|zanja/i,              blocks: /instalaci.*malla|tendido.*tierra|malla.*tierra/i },
+  { pred: /instalaci.*malla|malla.*tierra/i,                blocks: /tendido.*cable.*baja|tendido.*lv|cable.*baja/i },
+  { pred: /instalaci.*bandej|bandeja/i,                     blocks: /tendido.*cable/i },
+  { pred: /tendido.*cable/i,                                blocks: /conexi.*cable|conex.*cable|conexionado/i },
+  { pred: /tapado.*zanja|tapado/i,                          blocks: /conexionado.*cable.*baja/i },
+  // Fencing/perimeter before PV installation
+  { pred: /cerco.*perimetral|cerramiento/i,                 blocks: /instalaci.*panel|instalaci.*modulo|montaje.*panel/i },
+  // Civil works before electrical
+  { pred: /obras.*civil|obra.*civil|construcci.*civil/i,    blocks: /instalaci.*el[eé]ctric|tendido.*cable/i },
+  // Structures before equipment
+  { pred: /estructura/i,                                    blocks: /instalaci.*equip|montaje.*equip/i },
+];
+
+/** Check if activity B is blocked by incomplete predecessor following construction rules */
+function _smartFindBlockers(activity, allLeaves) {
+  const name    = (activity.tarea || '').toLowerCase();
+  const edt     = activity.edt || '';
+  const areaEdt = edt.split('.').slice(0, 4).join('.');  // same sub-area
+  const blockers = [];
+
+  SMART_RULES.forEach(rule => {
+    if (!rule.blocks.test(name)) return;
+    // Look for an incomplete predecessor in the same area
+    const pred = allLeaves.find(p =>
+      p.edt !== edt &&
+      p.edt.startsWith(areaEdt.split('.').slice(0, 3).join('.')) &&
+      rule.pred.test((p.tarea || '').toLowerCase()) &&
+      p.pctCompReal < 0.995
+    );
+    if (pred && !blockers.find(b => b.edt === pred.edt)) {
+      blockers.push(pred);
+    }
+  });
+
+  // EDT-order rule: if a sibling with lower number is also late and has higher incidence
+  const parts     = edt.split('.');
+  const parentEdt = parts.slice(0, -1).join('.');
+  const mySeq     = parseInt(parts[parts.length - 1]) || 999;
+  allLeaves.forEach(p => {
+    if (p.edt === edt) return;
+    const pp   = p.edt.split('.');
+    const pPar = pp.slice(0, -1).join('.');
+    const pSeq = parseInt(pp[pp.length - 1]) || 999;
+    if (pPar === parentEdt && pSeq < mySeq &&
+        p.pctCompReal < 0.995 &&
+        p.incidencia >= activity.incidencia * 0.3 &&
+        !blockers.find(b => b.edt === p.edt)) {
+      blockers.push(p);
+    }
+  });
+
+  return blockers;
+}
+
+/** Classify all candidate activities */
+function _smartClassify(candidates, allLeaves) {
+  return candidates.map(r => {
+    if (r.pctCompReal >= 0.995) return null; // skip completed
+
+    const blockers = _smartFindBlockers(r, allLeaves);
+    const potential = r.incidencia * (r.pctCompPlan - r.pctCompReal);
+
+    let cls, reason;
+    if (blockers.length > 0) {
+      cls = 'blocked';
+      reason = `Bloqueada por: ${blockers.map(b => b.tarea?.trim() || b.edt).join(', ')}`;
+    } else if (r.incidencia < 0.0005) {
+      cls = 'low';
+      reason = `Baixa incidência (${pct(r.incidencia,3)}) — impacto mínimo no desvio`;
+    } else {
+      cls = 'executable';
+      reason = `Liberada para execução — incidência ${pct(r.incidencia,3)}, potencial de recuperação ${pct(potential,3)}`;
+    }
+
+    return { ...r, cls, blockers, potential, reason };
+  }).filter(Boolean);
+}
+
+/** Find "enabler" activities — incomplete predecessors that unlock high-value blocked activities */
+function _smartFindEnablers(classified) {
+  const enablers = new Map(); // edt → enabler info
+  classified.filter(r => r.cls === 'blocked').forEach(blocked => {
+    blocked.blockers.forEach(pred => {
+      if (!enablers.has(pred.edt)) {
+        // Find the pred in classified (it may already be there as executable/low)
+        const existing = classified.find(r => r.edt === pred.edt);
+        const unlocks  = classified.filter(r =>
+          r.cls === 'blocked' && r.blockers.find(b => b.edt === pred.edt)
+        );
+        const unlockedPotential = unlocks.reduce((s, u) => s + u.potential, 0);
+        enablers.set(pred.edt, {
+          ...(existing || pred),
+          cls:               'enabler',
+          unlocks,
+          unlockedPotential,
+          potential:         (existing?.potential || 0) + unlockedPotential * 0.5,
+          reason:            `Habilitadora — libera ${unlocks.length} atividade(s) bloqueada(s) com potencial adicional de ${pct(unlockedPotential,3)}: ${unlocks.map(u => u.tarea?.trim()?.slice(0,30)).join('; ')}`,
+        });
+      }
+    });
+  });
+  return [...enablers.values()];
+}
+
+function setSmartScenario(n) {
+  _smartScType = n;
+  document.querySelectorAll('.smart-type-btn').forEach(b =>
+    b.classList.toggle('smart-type-active', +b.dataset.sc === n)
+  );
+}
+
+function runSmartScenario() {
+  if (!D) return;
+  const cutDate = D.meta.dataDate;
+  const weeks   = Math.max(1, parseInt(document.getElementById('smartWeeks')?.value || '10'));
+  const allLeaves = D.allLeaves;
+
+  // ── Build candidate pool based on scenario type ──────────────────────
+  let pool;
+  if (_smartScType === 1) {
+    // Not started: should have started, real=0
+    pool = allLeaves.filter(r =>
+      r.incidencia > 0 && r.inicio && r.inicio <= cutDate &&
+      r.pctCompReal === 0 && r.pctCompPlan > 0.001
+    );
+  } else if (_smartScType === 2) {
+    // Mixed: not started + behind (same as Prazos c/ atraso)
+    pool = allLeaves.filter(r =>
+      r.incidencia > 0 && r.inicio && r.inicio <= cutDate && (
+        (r.pctCompReal === 0 && r.pctCompPlan > 0.001) ||
+        (r.pctCompReal > 0 && r.pctCompReal < 0.995 && r.pctCompPlan > r.pctCompReal + 0.005)
+      )
+    );
+  } else {
+    // Fastest: highest incidence regardless of type, pick minimum set
+    pool = allLeaves.filter(r =>
+      r.incidencia > 0 && r.pctCompReal < r.pctCompPlan - 0.005
+    );
+  }
+
+  // ── Classify ──────────────────────────────────────────────────────────
+  const classified = _smartClassify(pool, allLeaves);
+  const enablers   = _smartFindEnablers(classified);
+
+  // Merge enablers into classified (replacing or adding)
+  enablers.forEach(en => {
+    const idx = classified.findIndex(r => r.edt === en.edt);
+    if (idx >= 0) classified[idx] = en;
+    else classified.push(en);
+  });
+
+  // ── Sort: executable+enabler by potential desc, blocked last ─────────
+  classified.sort((a, b) => {
+    const ord = { executable: 0, enabler: 1, low: 2, blocked: 3 };
+    if (ord[a.cls] !== ord[b.cls]) return ord[a.cls] - ord[b.cls];
+    return b.potential - a.potential;
+  });
+
+  // Scenario 3: fastest = top N that together reach recovery target
+  let display = classified;
+  if (_smartScType === 3) {
+    const target  = Math.abs(D.meta.desvio || 0);
+    let   cum     = 0;
+    const picked  = [];
+    for (const r of classified.filter(x => x.cls === 'executable' || x.cls === 'enabler')) {
+      picked.push(r);
+      cum += r.potential;
+      if (cum >= target) break;
+    }
+    // Also include top blockers explanation
+    display = [...picked, ...classified.filter(x => x.cls === 'blocked').slice(0, 5)];
+  }
+
+  // ── Recovery target calculation (same logic as Recovery tab) ─────────
+  const devActual       = D.meta.desvio || 0;
+  // Approximate plan at week N from now: use weekly plan increment
+  const weeklyPlanIncr  = D.meta.pctPlan / Math.max(1, D.meta.dataWeek?.replace?.(/\D/g,'') || 30);
+  const planAtTarget    = Math.min(1, (D.meta.pctPlan || 0) + weeklyPlanIncr * weeks);
+  const recNeeded       = planAtTarget - (D.meta.pctReal || 0);  // how much real must increase
+  const execPotential   = classified
+    .filter(r => r.cls === 'executable' || r.cls === 'enabler')
+    .reduce((s, r) => s + r.potential, 0);
+
+  // ── Render ────────────────────────────────────────────────────────────
+  _renderSmartResults(display, classified, recNeeded, execPotential, devActual, weeks);
+}
+
+function _renderSmartResults(display, allClassified, recNeeded, execPotential, devActual, weeks) {
+  const execCount   = allClassified.filter(r => r.cls === 'executable').length;
+  const blockedCount= allClassified.filter(r => r.cls === 'blocked').length;
+  const enablerCount= allClassified.filter(r => r.cls === 'enabler').length;
+  const lowCount    = allClassified.filter(r => r.cls === 'low').length;
+  const totalExecPot= allClassified.filter(r => r.cls==='executable'||r.cls==='enabler')
+                        .reduce((s,r) => s+r.potential, 0);
+
+  // Recovery target banner
+  const targetEl = document.getElementById('smartRecTarget');
+  if (targetEl) {
+    const feasible = totalExecPot >= recNeeded;
+    targetEl.style.display = '';
+    targetEl.className = 'smart-rec-target ' + (feasible ? 'smart-target-ok' : 'smart-target-warn');
+    targetEl.innerHTML = `
+      <span><i class="bi bi-bullseye"></i> Recuperação necessária em ${weeks} semanas: <strong>${signPct(recNeeded, 3)}</strong></span>
+      <span>Potencial executável: <strong>${pct(totalExecPot, 3)}</strong></span>
+      <span class="${feasible ? 'smart-feasible' : 'smart-infeasible'}">
+        <i class="bi ${feasible ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill'}"></i>
+        ${feasible ? 'Recuperação viável com atividades disponíveis' : 'Potencial insuficiente — revisar bloqueios'}
+      </span>`;
+  }
+
+  // Summary cards
+  const cardsEl = document.getElementById('smartSummaryCards');
+  if (cardsEl) {
+    cardsEl.innerHTML = `
+      <div class="smart-card smart-card-exec">
+        <span class="smart-card-n">${execCount}</span><span>Executáveis agora</span>
+      </div>
+      <div class="smart-card smart-card-enabler">
+        <span class="smart-card-n">${enablerCount}</span><span>Habilitadoras</span>
+      </div>
+      <div class="smart-card smart-card-blocked">
+        <span class="smart-card-n">${blockedCount}</span><span>Bloqueadas</span>
+      </div>
+      <div class="smart-card smart-card-low">
+        <span class="smart-card-n">${lowCount}</span><span>Baixa incidência</span>
+      </div>`;
+  }
+
+  // Classification badge helper
+  const clsBadge = cls => ({
+    executable: `<span class="smart-badge exec">✓ Executável agora</span>`,
+    enabler:    `<span class="smart-badge enab">⚡ Habilitadora</span>`,
+    blocked:    `<span class="smart-badge blk">🔒 Bloqueada</span>`,
+    low:        `<span class="smart-badge low">↓ Baixa incidência</span>`,
+  }[cls] || '');
+
+  // Table
+  const head = `<tr>
+    <th class="left">Atividade</th>
+    <th>EDT</th>
+    <th>Status</th>
+    <th>Incid.</th>
+    <th>% Real</th><th>% Plan</th>
+    <th>Potencial</th>
+    <th class="left">Por que sugerida / Predecessora</th>
+  </tr>`;
+
+  const body = display.map(r => {
+    const rowCls = { executable:'smart-row-exec', enabler:'smart-row-enab', blocked:'smart-row-blk', low:'smart-row-low' }[r.cls] || '';
+    return `<tr class="${rowCls}">
+      <td class="left" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${r.tarea?.trim()}">${r.tarea?.trim()}</td>
+      <td style="font-family:monospace;font-size:11px">${r.edt}</td>
+      <td>${clsBadge(r.cls)}</td>
+      <td>${pct(r.incidencia, 3)}</td>
+      <td class="${devClass(r.pctCompReal - r.pctCompPlan)}">${pct(r.pctCompReal)}</td>
+      <td>${pct(r.pctCompPlan)}</td>
+      <td class="${r.cls === 'executable' || r.cls === 'enabler' ? 'auto-potential' : ''}">${pct(r.potential, 3)}</td>
+      <td class="left smart-reason" style="font-size:11px">${r.reason || '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const tableWrap = document.getElementById('smartTableWrap');
+  if (tableWrap) tableWrap.innerHTML = `<div class="grid-wrap">${window.tableWrap ? window.tableWrap(head, body) : `<table><thead>${head}</thead><tbody>${body}</tbody></table>`}</div>`;
+
+  // Footer
+  const footerEl = document.getElementById('smartFooterInfo');
+  const cumExec  = display.filter(r => r.cls === 'executable' || r.cls === 'enabler')
+                          .reduce((s, r) => s + r.potential, 0);
+  if (footerEl) {
+    footerEl.innerHTML = `
+      Desvio atual: <strong class="dev-neg">${signPct(devActual, 3)}</strong>
+      &nbsp;|&nbsp; Potencial das executáveis: <strong class="auto-potential">${pct(cumExec, 3)}</strong>
+      &nbsp;|&nbsp; Desvio projetado: <strong class="${devActual + cumExec >= 0 ? 'dev-pos' : 'dev-neg'}">${signPct(devActual + cumExec, 3)}</strong>`;
+  }
+
+  document.getElementById('smartResults').style.display = '';
+  document.getElementById('smartEmpty').style.display   = 'none';
+}
+
+function addSmartToSimulation() {
+  if (!D) return;
+  const allLeaves = D.allLeaves;
+  // Add only executable + enabler activities
+  const tableEl = document.getElementById('smartTableWrap');
+  if (!tableEl) return;
+
+  // Re-run to get current classified list
+  const addedEdts = new Set(_simTabRows.map(r => r.edt));
+  let count = 0;
+  // Collect from current display (smart table rows)
+  tableEl.querySelectorAll('tr.smart-row-exec, tr.smart-row-enab').forEach(tr => {
+    const edtCell = tr.querySelectorAll('td')[1];
+    const edt = edtCell?.textContent?.trim();
+    if (edt && !addedEdts.has(edt)) {
+      _simTabRows.push({ edt, delta: 0, mode: 'pct' });
+      addedEdts.add(edt);
+      count++;
+    }
+  });
+  if (count > 0) {
+    renderSimTab();
+    showToast(`${count} atividades adicionadas ao Cenário`);
+  } else {
+    showToast('Nenhuma atividade executável encontrada', true);
+  }
+}
+
+function setAutoType(type) {
+  _autoType = type;
+  document.querySelectorAll('.auto-type-btn').forEach(b => {
+    b.classList.toggle('auto-type-active', b.dataset.atype === type);
+  });
+}
+
+function generateAutoScenario() {
+  if (!D) return;
+  const weeks      = Math.max(1, parseInt(document.getElementById('autoWeeks')?.value   || '4'));
+  const maxActs    = Math.max(1, parseInt(document.getElementById('autoMaxActs')?.value || '50'));
+  const cutDate    = D.meta.dataDate;
+  const horizonEnd = _isoAddDays(cutDate, weeks * 7);
+  const addedEdts  = new Set(_simTabRows.map(r => r.edt));
+
+  // ── Candidate activities ──────────────────────────────────────────────
+  // Use D.allLeaves — same source as the Prazos tab, so both show identical counts.
+  // _simTabCalcRow is extended below to also fall back to D.allLeaves so these
+  // activities are handled correctly in the simulator grid.
+  let candidates = D.allLeaves.filter(r =>
+    r.incidencia > 0.00001 && !addedEdts.has(r.edt)
+  );
+
+  // ── Filter using EXACT same criteria as the Prazos tab ──────────────
+  // This ensures "Não iniciadas" and "Atrasadas" match Prazos exactly.
+  switch (_autoType) {
+    case 'notStarted':
+      // Same as renderPlazos notStarted:
+      // should have started (inicio <= cutDate) but real = 0
+      candidates = candidates.filter(r =>
+        r.inicio && r.inicio <= cutDate &&
+        r.pctCompReal === 0 &&
+        r.incidencia > 0
+      );
+      break;
+    case 'behind':
+      // Same as renderPlazos startedLate:
+      // started, < 99.5% done, still within planned period, lagging behind plan
+      candidates = candidates.filter(r =>
+        r.pctCompReal > 0 &&
+        r.pctCompReal < 0.995 &&
+        r.inicio && r.inicio <= cutDate &&
+        r.pctCompPlan > r.pctCompReal + 0.005 &&
+        r.incidencia > 0
+      );
+      break;
+    case 'mixed':
+      // Union of notStarted + behind (same definitions as above)
+      candidates = candidates.filter(r => {
+        const notStarted = r.inicio && r.inicio <= cutDate &&
+          r.pctCompReal === 0 && r.incidencia > 0;
+        const behind = r.pctCompReal > 0 && r.pctCompReal < 0.995 &&
+          r.inicio && r.inicio <= cutDate &&
+          r.pctCompPlan > r.pctCompReal + 0.005 && r.incidencia > 0;
+        return notStarted || behind;
+      });
+      break;
+  }
+
+  // ── The horizon (weeks) only restricts "Próximas" (upcoming), exactly
+  //    like Prazos tab: "Não iniciadas" and "Atrasadas" show ALL activities
+  //    regardless of their finish date — so no horizon filter here.
+  const pool = candidates;
+
+  // ── Calculate recovery potential for each ────────────────────────────
+  // Potential = incidencia × (pctPlan − pctReal) — the gap to close
+  const withPotential = pool.map(r => ({
+    ...r,
+    potential: r.incidencia * (r.pctCompPlan - r.pctCompReal),
+    gapPct:    r.pctCompPlan - r.pctCompReal,
+    selected:  false,   // user must explicitly check each activity
+  }));
+
+  // Sort by potential (highest first) and take top N
+  withPotential.sort((a, b) => b.potential - a.potential);
+  _autoScRows = withPotential.slice(0, maxActs);
+
+  renderAutoScResults();
+  document.getElementById('autoScResults').style.display = '';
+}
+
+function renderAutoScResults() {
+  const tableDiv  = document.getElementById('autoScTable');
+  const summaryEl = document.getElementById('autoScSummary');
+  if (!tableDiv || !_autoScRows.length) return;
+
+  // Cumulative recovery
+  let cumSelected = 0;
+  let cumAll      = 0;
+  _autoScRows.forEach(r => { cumAll += r.potential; if (r.selected) cumSelected += r.potential; });
+
+  const currentDev = D.meta.desvio || 0;  // negative = behind
+
+  const typeLabel = { notStarted: 'Não iniciadas', behind: 'Atrasadas', mixed: 'Misto' };
+
+  const head = `<tr>
+    <th style="width:28px"></th>
+    <th class="left">Atividade</th>
+    <th>EDT</th>
+    <th>Início LB</th><th>Fin LB</th>
+    <th>Incid.</th>
+    <th>% Real</th><th>% Plan</th>
+    <th title="Potencial de recuperação se concluída">Recuperação</th>
+    <th title="Recuperação acumulada das selecionadas">Acumulado</th>
+  </tr>`;
+
+  let runCum = 0;
+  const body = _autoScRows.map((r, i) => {
+    if (r.selected) runCum += r.potential;
+    const cumCls = runCum >= Math.abs(currentDev) ? 'auto-cum-reached' : '';
+    const esc_edt = r.edt.replace(/'/g, "\\'");
+    return `<tr class="${r.selected ? 'auto-row-sel' : 'auto-row-unsel'}">
+      <td><input type="checkbox" ${r.selected ? 'checked' : ''} class="auto-chk"
+                 onchange="_autoScToggle(${i},this.checked)"></td>
+      <td class="left" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${r.tarea.trim()}">${r.tarea.trim()}</td>
+      <td style="font-family:monospace;font-size:11px">${r.edt}</td>
+      <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
+      <td>${pct(r.incidencia, 3)}</td>
+      <td class="${devClass(r.pctCompReal - r.pctCompPlan)}">${pct(r.pctCompReal)}</td>
+      <td>${pct(r.pctCompPlan)}</td>
+      <td class="auto-potential"><strong>${pct(r.potential, 3)}</strong></td>
+      <td class="auto-cum ${cumCls}"><strong>${r.selected ? pct(runCum, 3) : '—'}</strong></td>
+    </tr>`;
+  }).join('');
+
+  tableDiv.innerHTML = `<div class="grid-wrap auto-grid-inner">${tableWrap(head, body)}</div>`;
+
+  // Summary
+  const newDev     = currentDev + cumSelected;
+  const selCount   = _autoScRows.filter(r => r.selected).length;
+  const reachedCls = newDev >= 0 ? 'auto-sum-ok' : 'auto-sum-warn';
+  summaryEl.innerHTML = `
+    <span><strong>${selCount}</strong> atividades selecionadas</span>
+    <span class="auto-sum-item">Recuperação: <strong class="auto-potential">${signPct(cumSelected, 3)}</strong></span>
+    <span class="auto-sum-item">Desvio atual: <strong class="dev-neg">${signPct(currentDev, 3)}</strong></span>
+    <span class="auto-sum-item ${reachedCls}">Desvio projetado: <strong>${signPct(newDev, 3)}</strong></span>`;
+}
+
+function _autoScToggle(idx, checked) {
+  if (_autoScRows[idx]) _autoScRows[idx].selected = checked;
+  renderAutoScResults();
+}
+
+function autoScSelectAll(state) {
+  _autoScRows.forEach(r => r.selected = state);
+  renderAutoScResults();
+}
+
+/** Select only the top N activities (highest potential) */
+function autoScSelectTop(n) {
+  _autoScRows.forEach((r, i) => r.selected = i < n);
+  renderAutoScResults();
+}
+
+/** Add all selected auto-scenario rows to the simulation */
+function addAutoScToSimulation() {
+  const toAdd = _autoScRows.filter(r => r.selected);
+  if (!toAdd.length) { showToast && showToast('Nenhuma atividade selecionada', true); return; }
+  const addedEdts = new Set(_simTabRows.map(r => r.edt));
+  toAdd.forEach(r => {
+    if (!addedEdts.has(r.edt)) {
+      _simTabRows.push({ edt: r.edt, delta: 0, mode: r.isConsolidated ? 'pb' : 'pct' });
+    }
+  });
+  renderSimTab();
+  showToast && showToast(`${toAdd.length} atividades adicionadas ao cenário`);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 function initSimTab() {
   if (!D) return;
   _simTabRows = [];
@@ -4182,12 +4698,32 @@ function _renderSimTabTable() {
     if (!res) return '';
     const { leaf, isPB } = res;
     const sid    = _simTabSafeId(row.edt);
-    const maxD   = isPB && row.mode === 'pb'
+    // Input type depends on whether this activity uses PB or % mode
+    const usePB  = isPB && row.mode === 'pb';
+    const maxD   = usePB
       ? Math.max(0, leaf.pbTotal - leaf.pbAv)
       : ((1 - leaf.pctCompReal) * 100).toFixed(1);
-    const step   = (isPB && row.mode === 'pb') ? '1' : '0.5';
+    const step   = usePB ? '1' : '0.5';
+    const unit   = usePB ? 'PB' : '%';
+    const placeholder = usePB
+      ? `0 – ${maxD} PB`
+      : `0 – ${maxD}%`;
     const recCls = res.recovery >= 0 ? 'simtab-pos simtab-res-cell' : 'simtab-neg simtab-res-cell';
-    const devCls = devClass(leaf.desviacion);
+
+    // Delta input cell: show PB input for PB activities, % input for Reg activities
+    const deltaCell = usePB
+      ? `<td class="simtab-delta-cell">
+           <input type="number" class="simtab-row-delta" data-idx="${idx}"
+                  min="0" max="${maxD}" step="${step}" value="${row.delta}"
+                  title="PB adicionais (máx: ${maxD} PB restantes)">
+           <span class="simtab-delta-unit-tag">PB</span>
+         </td>`
+      : `<td class="simtab-delta-cell" title="% adicional a simular sobre o real atual (${pct(leaf.pctCompReal)}). Máx: ${maxD}%">
+           <input type="number" class="simtab-row-delta" data-idx="${idx}"
+                  min="0" max="${maxD}" step="${step}" value="${row.delta}"
+                  placeholder="0–${maxD}">
+           <span class="simtab-delta-unit-tag pct-tag">%</span>
+         </td>`;
 
     return `<tr>
       <td class="left">${leaf.tarea.trim()}</td>
@@ -4195,8 +4731,7 @@ function _renderSimTabTable() {
       <td>${isPB ? leaf.pbTotal : '—'}</td>
       <td>${isPB ? leaf.pbAv : '—'}</td>
       <td>${isPB ? (leaf.pbPlan ?? '—') : '—'}</td>
-      <td><input type="number" class="simtab-row-delta" data-idx="${idx}"
-           min="0" max="${maxD}" step="${step}" value="${row.delta}"></td>
+      ${deltaCell}
       <td>${pct(leaf.pctCompReal)}</td>
       <td id="${sid}-nr">${pct(res.newReal)}</td>
       <td class="${recCls}" id="${sid}-rec">${_ppFmt(res.recovery)}</td>
@@ -4218,7 +4753,7 @@ function _renderSimTabTable() {
        <th>${t('sim.th.pbTotal')}</th>
        <th>${t('sim.th.pbExec')}</th>
        <th>${t('sim.th.pbPlan')}</th>
-       <th>${t('sim.th.pbSim')}</th>
+       <th title="PB adicionales (ativ. PB) ou % de avance adicional (ativ. Reg)">Adicional<br><span style="font-size:9px;font-weight:400;opacity:.7">PB ou %</span></th>
        <th>${t('sim.th.pctReal')}</th>
        <th>${t('sim.th.pctSimReal')}</th>
        <th>${t('sim.th.recovery')}</th>
