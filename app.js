@@ -1262,6 +1262,7 @@ function render() {
   _tryRender(renderSinAvanceCharts, D.sinAvance);
   _tryRender(renderSinAvanceTable, D.sinAvance);
   _tryRender(renderPlazos);
+  _tryRender(renderRendimentos);
   const _rankNeg = D.ranking.filter(r => r.desvPond < 0);
   const _rankPos = D.ranking.filter(r => r.desvPond > 0).sort((a,b) => b.desvPond - a.desvPond);
   _tryRender(renderRankingBar,      _rankNeg.slice(0, 20));
@@ -3825,6 +3826,8 @@ function setupTabFilters() {
 
   // Plazos accordion filters
   on('plSearch',       'input',  () => { if (D) renderPlazos(); });
+  on('rendDesvMin',    'input',  () => { if (D) renderRendimentos(); });
+  on('rendDesvMin',    'change', () => { if (D) renderRendimentos(); });
   on('plStatusFilter', 'change', () => { if (D) renderPlazos(); });
   on('plUpWeeks',      'input',  () => { if (D) renderPlazos(); });
   on('plUpWeeks',      'change', () => { if (D) renderPlazos(); });
@@ -3981,8 +3984,15 @@ function renderSimActList() {
       const isAdded = added.has(r.edt);
       const isSel   = r.edt === _simActSelectedEdt;
       const cls     = isAdded ? ' sim-act-row-added' : isSel ? ' sim-act-row-selected' : '';
-      const btn     = isAdded
-        ? `<span class="sim-act-added-tag">✓ adicionado</span>`
+      // Checkbox for multi-select (hidden when already added)
+      const chkCell = isAdded
+        ? `<td><span class="sim-act-added-tag">✓</span></td>`
+        : `<td onclick="event.stopPropagation()">
+             <input type="checkbox" class="sim-multi-chk" value="${r.edt}"
+                    onchange="_simActUpdateMultiCount()" title="Selecionar para adição múltipla">
+           </td>`;
+      const btn = isAdded
+        ? `<span class="sim-act-added-tag">adicionado</span>`
         : `<button class="sim-act-add-btn" onclick="event.stopPropagation();simActSelectRow('${r.edt}','${r.tarea.trim().replace(/'/g,"\\'")}')">
              ${isSel ? '✓' : '+'}
            </button>`;
@@ -3990,7 +4000,8 @@ function renderSimActList() {
       const escapedName = r.tarea.trim().replace(/'/g, "\\'");
       return `<tr class="sim-act-row${cls}"
                onclick="${isAdded ? '' : `simActSelectRow('${escapedEdt}','${escapedName}')`}">
-        <td class="left" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+        ${chkCell}
+        <td class="left" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
             title="${r.tarea.trim()}">${r.tarea.trim()}</td>
         <td>${r.edt}</td>
         <td>${fmtDate(r.inicio)}</td><td>${fmtDate(r.fin)}</td>
@@ -4042,6 +4053,54 @@ function simActSelectRow(edt, name) {
   if (badge)    badge.style.display = '';
   if (badgeName) badgeName.textContent = name;
   renderSimActList();  // refresh to show checkmark
+}
+
+/** Update the multi-select count bar */
+function _simActUpdateMultiCount() {
+  const chks   = [...document.querySelectorAll('#simActList .sim-multi-chk:checked')];
+  const bar    = document.getElementById('simMultiBar');
+  const countEl= document.getElementById('simMultiCount');
+  if (bar)     bar.style.display  = chks.length > 0 ? '' : 'none';
+  if (countEl) countEl.textContent = `${chks.length} selecionada${chks.length !== 1 ? 's' : ''}`;
+}
+
+/** Mark/unmark all visible checkboxes */
+function simActMarkAll(state) {
+  document.querySelectorAll('#simActList .sim-multi-chk').forEach(c => c.checked = state);
+  _simActUpdateMultiCount();
+}
+
+/** Add all checked activities to the simulation */
+function simActAddMulti() {
+  const chks = [...document.querySelectorAll('#simActList .sim-multi-chk:checked')];
+  if (!chks.length) { showToast('Nenhuma atividade marcada', true); return; }
+
+  const addedEdts = new Set(_simTabRows.map(r => r.edt));
+  let ok = 0, skipped = 0;
+
+  chks.forEach(chk => {
+    const edt = chk.value;
+    if (addedEdts.has(edt)) { skipped++; return; }
+    const leaf = _simTabGetLeaves().find(r => r.edt === edt)
+              || (D ? D.allLeaves.find(r => r.edt === edt) : null);
+    if (!leaf) { skipped++; return; }
+    const hasPB = !!leaf.isConsolidated || (leaf.pbTotal != null && leaf.pbTotal > 0);
+    _simTabRows.push({ edt, delta: 0, mode: hasPB ? 'pb' : 'pct' });
+    addedEdts.add(edt);
+    ok++;
+  });
+
+  if (ok > 0) {
+    renderSimTab();
+    const msg = `${ok} atividade${ok > 1 ? 's' : ''} adicionada${ok > 1 ? 's' : ''} ao cenário`
+      + (skipped ? ` · ${skipped} ignorada${skipped > 1 ? 's' : ''}` : '');
+    showToast(msg);
+    // Uncheck all and hide bar
+    simActMarkAll(false);
+    _simActUpdateMultiCount();
+  } else {
+    showToast('Nenhuma atividade nova adicionada' + (skipped ? ` (${skipped} já no cenário)` : ''), true);
+  }
 }
 
 /** Clear current selection */
@@ -5197,6 +5256,232 @@ function _isoAddDays(iso, days) {
   const d = new Date(iso);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().split('T')[0];
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// RENDIMENTOS — Atividades repetidas consolidadas por Power Block
+// ════════════════════════════════════════════════════════════════════════════
+
+const _rendCollapsed = new Set();   // group keys currently collapsed
+
+/** Normalise a task name for grouping (trim + lowercase, remove PB identifiers) */
+function _rendNorm(name) {
+  return (name || '').trim().toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/\bpb[-\s]?n?\s*\d+\b/gi, '')  // remove PB-N1, PB-2, etc.
+    .replace(/\bpower\s+block\s*\d+\b/gi, '')
+    .replace(/\bps[-\s]?\d+\b/gi, '')
+    .replace(/\bpb\s*[-–]\s*n\s*\d+\b/gi, '')
+    .replace(/\bpv\s*[-–]\s*\d+\b/gi, '')
+    .replace(/\bzs?\s*\d+\b/gi, '')         // zone Z1, Z2…
+    .replace(/\s+/g, ' ').trim();
+}
+
+/** Efficiency label and class */
+function _rendEffCls(eff) {
+  if (eff === null || eff === undefined) return { lbl: '—', cls: '' };
+  if (eff >= 0.95)  return { lbl: (eff * 100).toFixed(0) + '%', cls: 'rend-eff-ok' };
+  if (eff >= 0.60)  return { lbl: (eff * 100).toFixed(0) + '%', cls: 'rend-eff-warn' };
+  return { lbl: (eff * 100).toFixed(0) + '%', cls: 'rend-eff-err' };
+}
+
+/** Status badge HTML */
+function _rendStatusBadge(r) {
+  const s = r.status || (r.pctCompReal >= 0.995 ? 'completed'
+          : r.pctCompReal > 0 ? (r.pctCompReal < r.pctCompPlan - 0.005 ? 'late' : 'inProgress')
+          : 'notStarted');
+  const map = {
+    completed:  ['rend-st-ok',   '✓ Concluída'],
+    inProgress: ['rend-st-prog', '▶ Em progresso'],
+    late:       ['rend-st-late', '⚠ Atrasada'],
+    notStarted: ['rend-st-ns',   '○ Não iniciada'],
+  };
+  const [cls, lbl] = map[s] || ['', s];
+  return `<span class="rend-badge ${cls}">${lbl}</span>`;
+}
+
+function renderRendimentos() {
+  if (!D) return;
+  const body      = document.getElementById('rendBody');
+  const emptyEl   = document.getElementById('rendEmpty');
+  const kpiBar    = document.getElementById('rendKpiBar');
+  if (!body) return;
+
+  const q          = (document.getElementById('rendSearch')?.value   || '').toLowerCase();
+  const areaFlt    = document.getElementById('rendAreaBox')?.value   || '';
+  const statusFlt  = document.getElementById('rendStatusBox')?.value || '';
+  const desvMin    = parseFloat(document.getElementById('rendDesvMin')?.value) || 0;
+
+  // ── 1. Collect leaves ──────────────────────────────────────────────────
+  let leaves = D.allLeaves.filter(r => !r.resumen);
+
+  // ── 2. Area filter dropdown ────────────────────────────────────────────
+  const areaBox = document.getElementById('rendAreaBox');
+  if (areaBox && areaBox.options.length <= 1) {
+    const areas = D.areas.filter(a => a.nivel === 3).sort((a,b) => a.edt.localeCompare(b.edt));
+    areaBox.innerHTML = '<option value="">— Todas as áreas —</option>' +
+      areas.map(a => `<option value="${a.edt}">${a.edt} — ${a.tarea.trim()}</option>`).join('');
+  }
+  if (areaFlt) leaves = leaves.filter(r => r.edt.startsWith(areaFlt + '.') || r.edt === areaFlt);
+
+  // ── 3. Status filter ────────────────────────────────────────────────────
+  if (statusFlt) {
+    leaves = leaves.filter(r => {
+      const s = r.status || (r.pctCompReal >= 0.995 ? 'completed'
+              : r.pctCompReal > 0 ? (r.pctCompReal < r.pctCompPlan - 0.005 ? 'late' : 'inProgress')
+              : 'notStarted');
+      return s === statusFlt;
+    });
+  }
+
+  // ── 4. Desvio min filter ────────────────────────────────────────────────
+  if (desvMin > 0) {
+    leaves = leaves.filter(r => Math.abs((r.pctCompReal - r.pctCompPlan) * 100) >= desvMin);
+  }
+
+  // ── 5. Text search ──────────────────────────────────────────────────────
+  if (q) leaves = leaves.filter(r =>
+    r.tarea.toLowerCase().includes(q) || r.edt.toLowerCase().includes(q)
+  );
+
+  if (!leaves.length) {
+    body.innerHTML = '';
+    emptyEl.style.display = '';
+    kpiBar.innerHTML = '';
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  // ── 6. Group by normalised task name → "activity type" ─────────────────
+  const groups = new Map();  // normName → { name, leaves[] }
+  leaves.forEach(r => {
+    const key  = _rendNorm(r.tarea);
+    const name = r.tarea.trim();
+    if (!groups.has(key)) groups.set(key, { key, name, leaves: [] });
+    // Prefer the shorter/cleaner name as group label
+    const g = groups.get(key);
+    if (name.length < g.name.length) g.name = name;
+    g.leaves.push(r);
+  });
+
+  // Sort groups: by incidencia sum desc
+  const sorted = [...groups.values()].sort((a, b) => {
+    const ai = a.leaves.reduce((s, r) => s + r.incidencia, 0);
+    const bi = b.leaves.reduce((s, r) => s + r.incidencia, 0);
+    return bi - ai;
+  });
+
+  // ── 7. KPI summary ─────────────────────────────────────────────────────
+  const totalHH       = leaves.reduce((s, r) => s + (r.hh || 0), 0);
+  const totalIncid    = leaves.reduce((s, r) => s + r.incidencia, 0);
+  const wPlan         = leaves.reduce((s, r) => s + r.incidencia * r.pctCompPlan, 0);
+  const wReal         = leaves.reduce((s, r) => s + r.incidencia * r.pctCompReal, 0);
+  const avgPlan       = totalIncid > 0 ? wPlan / totalIncid : 0;
+  const avgReal       = totalIncid > 0 ? wReal / totalIncid : 0;
+  const totalGroups   = sorted.length;
+  const singlePB      = sorted.filter(g => g.leaves.length === 1).length;
+  const multiPB       = totalGroups - singlePB;
+
+  kpiBar.innerHTML = `
+    <div class="rend-kpi"><span class="rend-kpi-n">${totalGroups}</span><small>Tipos de atividade</small></div>
+    <div class="rend-kpi"><span class="rend-kpi-n">${multiPB}</span><small>Atividades repetidas</small></div>
+    <div class="rend-kpi"><span class="rend-kpi-n">${leaves.length}</span><small>Total PBs/instâncias</small></div>
+    <div class="rend-kpi"><span class="rend-kpi-n">${Math.round(totalHH).toLocaleString()}</span><small>H-H Totais</small></div>
+    <div class="rend-kpi rend-kpi-plan"><span class="rend-kpi-n">${pct(avgPlan)}</span><small>% Plan (pond.)</small></div>
+    <div class="rend-kpi rend-kpi-real ${devClass(avgReal - avgPlan)}"><span class="rend-kpi-n">${pct(avgReal)}</span><small>% Real (pond.)</small></div>`;
+
+  // ── 8. Render rows ─────────────────────────────────────────────────────
+  let html = '';
+
+  sorted.forEach((g, gi) => {
+    const gid = 'rg_' + gi;
+    const collapsed = _rendCollapsed.has(gid);
+    const display   = collapsed ? 'style="display:none"' : '';
+    const icon      = collapsed ? '▶' : '▼';
+
+    // Consolidated metrics
+    const gHH    = g.leaves.reduce((s, r) => s + (r.hh || 0), 0);
+    const gIncid = g.leaves.reduce((s, r) => s + r.incidencia, 0);
+    const gWP    = g.leaves.reduce((s, r) => s + r.incidencia * r.pctCompPlan, 0);
+    const gWR    = g.leaves.reduce((s, r) => s + r.incidencia * r.pctCompReal, 0);
+    const gPlan  = gIncid > 0 ? gWP / gIncid : 0;
+    const gReal  = gIncid > 0 ? gWR / gIncid : 0;
+    const gDesv  = gReal - gPlan;
+    const gEff   = gPlan > 0.001 ? gReal / gPlan : null;
+    const { lbl: effLbl, cls: effCls } = _rendEffCls(gEff);
+    const pbs    = g.leaves.length;
+    const multiFlag = pbs > 1 ? `<span class="rend-multi-badge">${pbs} PBs</span>` : '';
+
+    // Group header row
+    html += `<tr class="rend-grp-hdr" data-gid="${gid}" onclick="rendToggle('${gid}')">
+      <td class="left rend-col-act">
+        <button class="rend-toggle-btn">${icon}</button>
+        <strong>${g.name}</strong>${multiFlag}
+      </td>
+      <td class="rend-col-edt" style="font-size:10px;color:var(--text-muted)">
+        ${pbs > 1 ? `(${pbs} EDTs)` : g.leaves[0].edt}
+      </td>
+      <td class="rend-col-pbs">${pbs}</td>
+      <td>${Math.round(gHH).toLocaleString()}</td>
+      <td>${pct(gIncid, 3)}</td>
+      <td>${pct(gPlan)}</td>
+      <td class="${devClass(gReal - gPlan)}">${pct(gReal)}</td>
+      <td class="${devClass(gDesv)}">${signPct(gDesv)}</td>
+      <td class="${effCls}">${effLbl}</td>
+      <td>
+        ${g.leaves.filter(r => (r.status || '') === 'late' || (r.pctCompReal < r.pctCompPlan - 0.005 && r.pctCompReal > 0)).length > 0
+          ? `<span class="rend-badge rend-st-late">⚠ ${g.leaves.filter(r => r.pctCompReal < r.pctCompPlan - 0.005 && r.pctCompReal > 0).length} atras.</span>`
+          : (gReal >= 0.995 ? `<span class="rend-badge rend-st-ok">✓</span>` : '')}
+      </td>
+    </tr>`;
+
+    // Individual PB rows
+    const pbsSorted = [...g.leaves].sort((a, b) => a.edt.localeCompare(b.edt));
+    pbsSorted.forEach((r, ri) => {
+      const desv = r.pctCompReal - r.pctCompPlan;
+      const eff  = r.pctCompPlan > 0.001 ? r.pctCompReal / r.pctCompPlan : null;
+      const { lbl: el, cls: ec } = _rendEffCls(eff);
+      const dur  = (r.inicio && r.fin)
+        ? Math.max(1, Math.round(_dateDiffDays(r.fin, r.inicio)))
+        : '—';
+      const hhd  = r.hh && dur !== '—' ? (r.hh / dur).toFixed(1) : '—';
+
+      html += `<tr class="rend-pb-row rend-row-${gi % 2 === 0 ? 'a' : 'b'}" ${display} data-gid="${gid}">
+        <td class="left rend-col-act rend-pb-cell">
+          <span class="rend-pb-dot"></span>
+          ${r.tarea.trim()}
+        </td>
+        <td class="rend-col-edt" style="font-family:monospace;font-size:11px">${r.edt}</td>
+        <td class="rend-col-pbs" style="font-size:11px;color:var(--text-muted)">
+          ${fmtDate(r.inicio)} → ${fmtDate(r.fin)}<br>
+          <span style="color:var(--muted);font-size:10px">${dur !== '—' ? dur+'d · '+hhd+'h/d' : ''}</span>
+        </td>
+        <td>${Math.round(r.hh || 0).toLocaleString()}</td>
+        <td style="font-size:11px">${pct(r.incidencia, 3)}</td>
+        <td>${pct(r.pctCompPlan)}</td>
+        <td class="${devClass(desv)}">${pct(r.pctCompReal)}</td>
+        <td class="${devClass(desv)}">${signPct(desv)}</td>
+        <td class="${ec}">${el}</td>
+        <td>${_rendStatusBadge(r)}</td>
+      </tr>`;
+    });
+  });
+
+  body.innerHTML = html;
+}
+
+function rendToggle(gid) {
+  if (_rendCollapsed.has(gid)) _rendCollapsed.delete(gid);
+  else _rendCollapsed.add(gid);
+  renderRendimentos();
+}
+
+function rendExpandAll(expand) {
+  if (expand) _rendCollapsed.clear();
+  else {
+    document.querySelectorAll('.rend-grp-hdr[data-gid]').forEach(r => _rendCollapsed.add(r.dataset.gid));
+  }
+  renderRendimentos();
 }
 
 // ── Plazos — Accordion por área ───────────────────────────────────────────────

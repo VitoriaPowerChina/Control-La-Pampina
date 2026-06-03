@@ -1404,6 +1404,82 @@ tr:hover td{background:var(--surface-2)}
   box-shadow:var(--shadow);
 }
 
+/* ── Rendimentos tab ─────────────────────────────────────────────────── */
+.rend-kpi-bar{
+  display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;
+}
+.rend-kpi{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:8px 14px;display:flex;flex-direction:column;align-items:center;
+  min-width:110px;box-shadow:var(--shadow);
+}
+.rend-kpi-n{ font-size:1.2rem;font-weight:800;color:var(--primary); }
+.rend-kpi-plan .rend-kpi-n{ color:var(--primary); }
+.rend-kpi-real .rend-kpi-n{ color:var(--success); }
+.rend-kpi small{ font-size:.66rem;color:var(--text-muted);text-align:center; }
+.rend-wrap{
+  overflow:auto;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  box-shadow:var(--shadow);
+  height:calc(100vh - 250px);
+}
+#rendTable{ width:100%;border-collapse:collapse;font-size:.80rem; }
+#rendTable thead{ position:sticky;top:0;z-index:10; }
+#rendTable thead th{
+  background:var(--primary);color:#fff;padding:7px 10px;
+  font-size:.74rem;font-weight:700;white-space:nowrap;text-align:center;
+  border-right:1px solid rgba(255,255,255,.12);
+}
+#rendTable thead th.left{ text-align:left; }
+#rendTable thead th:last-child{ border-right:none; }
+.rend-col-act{ min-width:220px;max-width:280px; }
+.rend-col-edt{ min-width:120px;font-size:.74rem; }
+.rend-col-pbs{ min-width:120px; }
+
+/* Group header */
+.rend-grp-hdr{
+  background:var(--primary-l);
+  border-top:2px solid var(--primary);
+  cursor:pointer;
+  transition:filter .1s;
+}
+.rend-grp-hdr:hover{ filter:brightness(.96); }
+.rend-grp-hdr td{ padding:7px 10px;font-weight:700; }
+.rend-toggle-btn{
+  background:none;border:1px solid var(--primary);border-radius:4px;
+  padding:1px 5px;cursor:pointer;font-size:.70rem;color:var(--primary);
+  margin-right:6px;
+}
+.rend-multi-badge{
+  display:inline-block;margin-left:6px;background:var(--primary);color:#fff;
+  font-size:.65rem;font-weight:700;padding:1px 6px;border-radius:10px;
+}
+
+/* PB child rows */
+.rend-pb-row td{ padding:5px 10px;border-bottom:1px solid var(--border2); }
+.rend-row-a{ background:var(--surface); }
+.rend-row-b{ background:var(--surface2); }
+.rend-pb-row:hover{ background:var(--primary-l); }
+.rend-pb-cell{ padding-left:28px !important; }
+.rend-pb-dot{
+  display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--primary);margin-right:6px;opacity:.5;
+}
+
+/* Status badges */
+.rend-badge{ display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600; }
+.rend-st-ok   { background:var(--ok-bg);color:var(--ok); }
+.rend-st-prog { background:var(--primary-l);color:var(--primary); }
+.rend-st-late { background:var(--err-bg);color:var(--err); }
+.rend-st-ns   { background:var(--border2);color:var(--text-muted); }
+
+/* Efficiency column */
+.rend-eff-ok   { color:var(--ok);font-weight:700; }
+.rend-eff-warn { color:var(--warn);font-weight:700; }
+.rend-eff-err  { color:var(--err);font-weight:700; }
+
 /* ── Smart Scenarios ─────────────────────────────────────────────────── */
 .smart-panel{ border-left:4px solid #7c3aed; }
 .smart-cfg-bar{
@@ -1683,6 +1759,18 @@ tr:hover td{background:var(--surface-2)}
 .sim-act-row-added { opacity:.5; cursor:default; }
 .sim-falta-cell { text-align:center; color:var(--warn); font-size:.80rem; }
 .sim-act-added-tag { font-size:10px; color:var(--success); font-weight:600; }
+/* Multi-select */
+.sim-multi-chk { cursor:pointer; accent-color:var(--primary); width:14px; height:14px; }
+.sim-multi-bar {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:7px 12px;
+  background:var(--primary-l);
+  border:1px solid var(--primary);
+  border-radius:0 0 var(--radius) var(--radius);
+  border-top:none;
+  margin-top:-1px;
+}
+.sim-multi-count { font-size:.80rem; font-weight:700; color:var(--primary); }
 .sim-act-add-btn{
   background:var(--primary);color:#fff;border:none;
   border-radius:4px;width:22px;height:22px;

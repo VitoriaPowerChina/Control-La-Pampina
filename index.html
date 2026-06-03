@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=6.8">
+  <link rel="stylesheet" href="styles.css?v=7.0">
   <script src="i18n.js?v=2.0"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -60,6 +60,7 @@
       <button class="nav-item" data-tab="consolidado"><i class="bi bi-diagram-3"></i><span data-i18n="nav.consolidated">Consolidado</span></button>
       <button class="nav-item" data-tab="recovery"><i class="bi bi-arrow-counterclockwise"></i><span data-i18n="nav.recovery">Recuperación</span></button>
       <button class="nav-item" data-tab="simulador"><i class="bi bi-sliders"></i><span data-i18n="nav.simulator">Simulador</span></button>
+      <button class="nav-item" data-tab="rendimentos"><i class="bi bi-speedometer2"></i><span>Rendimentos</span></button>
     </nav>
   </aside>
 
@@ -794,6 +795,18 @@
 
                   <!-- Accordion list (Prazos-style) -->
                   <div id="simActList" class="sim-act-list"></div>
+
+                  <!-- Multi-add bar (shown when checkboxes are ticked) -->
+                  <div id="simMultiBar" class="sim-multi-bar" style="display:none">
+                    <span id="simMultiCount" class="sim-multi-count">0 selecionadas</span>
+                    <div style="display:flex;gap:6px;margin-left:auto">
+                      <button class="simtab-btn-outline" onclick="simActMarkAll(true)">☑ Todas</button>
+                      <button class="simtab-btn-outline" onclick="simActMarkAll(false)">☐ Nenhuma</button>
+                      <button class="simtab-btn-primary" onclick="simActAddMulti()">
+                        <i class="bi bi-plus-circle"></i> Adicionar selecionadas
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div class="simtab-step">
@@ -884,6 +897,58 @@
       </div><!-- /simPane-manual -->
 
     </section><!-- /tab-simulador -->
+
+    <!-- ── RENDIMENTOS ───────────────────────────────────────────── -->
+    <section id="tab-rendimentos" class="tab-pane">
+      <div class="tab-header">
+        <h2><i class="bi bi-speedometer2"></i> Rendimentos — Atividades por Power Block</h2>
+        <div class="filters">
+          <input id="rendSearch" type="search" placeholder="Buscar atividade ou EDT…" oninput="renderRendimentos()">
+          <select id="rendAreaBox" onchange="renderRendimentos()"><option value="">— Todas as áreas —</option></select>
+          <select id="rendStatusBox" onchange="renderRendimentos()">
+            <option value="">Todos os status</option>
+            <option value="notStarted">Não iniciadas</option>
+            <option value="late">Atrasadas</option>
+            <option value="inProgress">Em progresso</option>
+            <option value="completed">Concluídas</option>
+          </select>
+          <label class="plazos-weeks-lbl" style="font-size:12px">
+            <span>Mostrar PBs com desvio ≥</span>
+            <input id="rendDesvMin" type="number" value="0" min="0" max="100" step="1" class="plazos-weeks-inp" style="width:54px">
+            <span>%</span>
+          </label>
+          <button class="btn-tree" onclick="rendExpandAll(true)">⊞ Expandir</button>
+          <button class="btn-tree" onclick="rendExpandAll(false)">⊟ Colapsar</button>
+        </div>
+      </div>
+
+      <!-- Summary KPIs -->
+      <div id="rendKpiBar" class="rend-kpi-bar"></div>
+
+      <!-- Tree table -->
+      <div id="rendWrap" class="rend-wrap">
+        <table id="rendTable">
+          <thead>
+            <tr>
+              <th class="left rend-col-act">Atividade / Power Block</th>
+              <th class="rend-col-edt">EDT</th>
+              <th class="rend-col-pbs">PBs</th>
+              <th>H-H Total</th>
+              <th>Incidência</th>
+              <th>% Plan</th>
+              <th>% Real</th>
+              <th>% Desvío</th>
+              <th>Eficiência</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="rendBody"></tbody>
+        </table>
+        <div id="rendEmpty" class="empty-msg" style="display:none">
+          <i class="bi bi-speedometer2"></i><br>Carregue o Anexo 01 para ver os rendimentos
+        </div>
+      </div>
+    </section><!-- /tab-rendimentos -->
 
     <!-- ── RECOVERY ANALYSIS ─────────────────────────────────────────── -->
     <section id="tab-recovery" class="tab-pane">
@@ -1140,6 +1205,6 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-<script src="app.js?v=10.2"></script>
+<script src="app.js?v=10.4"></script>
 </body>
 </html>
