@@ -5300,6 +5300,76 @@ function _rendStatusBadge(r) {
   return `<span class="rend-badge ${cls}">${lbl}</span>`;
 }
 
+// ── Per-leaf rendimento metrics (weekly speed of advance) ────────────────────
+function _rendMetrics(r) {
+  const currIdx = D.scurve.findIndex(s => s.isCurrent);
+  const ci      = currIdx >= 0 ? currIdx : (D.scurve.length - 1);
+
+  const plan    = (r.planSeries || []).slice(0, ci + 1);
+  const real    = (r.realSeries || []).slice(0, ci + 1);
+
+  // Weekly increments (avanço incremental = week[i] - week[i-1])
+  const planInc = plan.map((v, i) => Math.max(0, v - (plan[i-1] || 0)));
+  const realInc = real.map((v, i) => Math.max(0, v - (real[i-1] || 0)));
+
+  // Active weeks = weeks where plan increment > 0 (activity was scheduled)
+  const activeIdxs   = planInc.map((v, i) => v > 0.00001 ? i : -1).filter(i => i >= 0);
+  const realActiveIdxs = realInc.map((v, i) => v > 0.00001 ? i : -1).filter(i => i >= 0);
+
+  // Average weekly advance
+  const avgPlanInc = activeIdxs.length   ? planInc.filter((_, i) => activeIdxs.includes(i)).reduce((s, v) => s + v, 0) / activeIdxs.length : 0;
+  const avgRealInc = realActiveIdxs.length ? realInc.filter((_, i) => realActiveIdxs.includes(i)).reduce((s, v) => s + v, 0) / realActiveIdxs.length : 0;
+
+  // SPI cumulative = pctCompReal / pctCompPlan at current week
+  const planCum = plan[ci] || r.pctCompPlan || 0;
+  const realCum = real[ci] || r.pctCompReal || 0;
+  const spiCum  = planCum > 0.00001 ? realCum / planCum : null;
+
+  // SPI weekly (current week increments)
+  const lastPlanInc = planInc[ci] || 0;
+  const lastRealInc = realInc[ci] || 0;
+  const spiWeek = lastPlanInc > 0.00001 ? lastRealInc / lastPlanInc : null;
+
+  // Forecast: weeks needed to reach pctCompPlan (target) from current real
+  // Use recent trend (last 4 active real weeks for stability)
+  const recent4 = realInc.filter(v => v > 0.00001).slice(-4);
+  const trendInc = recent4.length > 0
+    ? recent4.reduce((s, v) => s + v, 0) / recent4.length
+    : avgRealInc;
+
+  const remaining      = Math.max(0, 1 - r.pctCompReal);   // to full completion
+  const remainingPlan  = Math.max(0, r.pctCompPlan - r.pctCompReal);  // to catch up to plan
+
+  const weeksToComplete  = trendInc > 0.00001 ? Math.ceil(remaining   / trendInc) : null;
+  const weeksToCatchUp   = trendInc > 0.00001 ? Math.ceil(remainingPlan / trendInc) : null;
+
+  // Forecast date (to complete 100%)
+  let forecastDate = null;
+  if (weeksToComplete !== null && D.meta.dataDate) {
+    forecastDate = _isoAddDays(D.meta.dataDate, weeksToComplete * 7);
+  }
+
+  return {
+    avgPlanInc, avgRealInc,
+    spiCum, spiWeek,
+    lastPlanInc, lastRealInc,
+    weeksToComplete, weeksToCatchUp, forecastDate,
+    trendInc,
+  };
+}
+
+/** SPI colour class */
+function _spiCls(spi) {
+  if (spi === null || spi === undefined) return '';
+  if (spi >= 0.95) return 'rend-spi-ok';
+  if (spi >= 0.70) return 'rend-spi-warn';
+  return 'rend-spi-err';
+}
+function _spiFmt(spi) {
+  if (spi === null || spi === undefined) return '—';
+  return spi.toFixed(2);
+}
+
 function renderRendimentos() {
   if (!D) return;
   const body      = document.getElementById('rendBody');
@@ -5394,23 +5464,42 @@ function renderRendimentos() {
   let html = '';
 
   sorted.forEach((g, gi) => {
-    const gid = 'rg_' + gi;
+    const gid       = 'rg_' + gi;
     const collapsed = _rendCollapsed.has(gid);
     const display   = collapsed ? 'style="display:none"' : '';
     const icon      = collapsed ? '▶' : '▼';
-
-    // Consolidated metrics
-    const gHH    = g.leaves.reduce((s, r) => s + (r.hh || 0), 0);
-    const gIncid = g.leaves.reduce((s, r) => s + r.incidencia, 0);
-    const gWP    = g.leaves.reduce((s, r) => s + r.incidencia * r.pctCompPlan, 0);
-    const gWR    = g.leaves.reduce((s, r) => s + r.incidencia * r.pctCompReal, 0);
-    const gPlan  = gIncid > 0 ? gWP / gIncid : 0;
-    const gReal  = gIncid > 0 ? gWR / gIncid : 0;
-    const gDesv  = gReal - gPlan;
-    const gEff   = gPlan > 0.001 ? gReal / gPlan : null;
-    const { lbl: effLbl, cls: effCls } = _rendEffCls(gEff);
-    const pbs    = g.leaves.length;
+    const pbs       = g.leaves.length;
     const multiFlag = pbs > 1 ? `<span class="rend-multi-badge">${pbs} PBs</span>` : '';
+
+    // ── Consolidated group metrics ─────────────────────────────────────
+    const gIncid   = g.leaves.reduce((s, r) => s + r.incidencia, 0);
+    const gWP      = g.leaves.reduce((s, r) => s + r.incidencia * r.pctCompPlan, 0);
+    const gWR      = g.leaves.reduce((s, r) => s + r.incidencia * r.pctCompReal, 0);
+    const gPlan    = gIncid > 0 ? gWP / gIncid : 0;
+    const gReal    = gIncid > 0 ? gWR / gIncid : 0;
+    const gDesv    = gReal - gPlan;
+
+    // Aggregate metrics (weighted avg by incidencia)
+    const leafMetrics = g.leaves.map(r => ({ r, m: _rendMetrics(r) }));
+    const totInc  = leafMetrics.reduce((s, { r }) => s + r.incidencia, 0) || 1;
+    const gAvgPlanInc = leafMetrics.reduce((s, { r, m }) => s + r.incidencia * m.avgPlanInc, 0) / totInc;
+    const gAvgRealInc = leafMetrics.reduce((s, { r, m }) => s + r.incidencia * m.avgRealInc, 0) / totInc;
+    const gSpiCum     = leafMetrics.filter(({ m }) => m.spiCum !== null)
+      .reduce((s, { r, m }) => s + r.incidencia * m.spiCum, 0) / totInc;
+    const gSpiWeek    = (() => {
+      const valid = leafMetrics.filter(({ m }) => m.spiWeek !== null);
+      if (!valid.length) return null;
+      return valid.reduce((s, { r, m }) => s + r.incidencia * m.spiWeek, 0) /
+             valid.reduce((s, { r }) => s + r.incidencia, 0);
+    })();
+
+    // Latest forecast (max forecast date among PBs)
+    const forecasts = leafMetrics.map(({ m }) => m.forecastDate).filter(Boolean).sort();
+    const gForecast = forecasts[forecasts.length - 1] || null;
+    const gForecastLate = gForecast && D.meta.dataDate &&
+      g.leaves.some(r => r.fin && gForecast > r.fin) ? ' rend-forecast-late' : '';
+
+    const lateCount = g.leaves.filter(r => r.pctCompReal < r.pctCompPlan - 0.005 && r.pctCompReal > 0).length;
 
     // Group header row
     html += `<tr class="rend-grp-hdr" data-gid="${gid}" onclick="rendToggle('${gid}')">
@@ -5421,47 +5510,43 @@ function renderRendimentos() {
       <td class="rend-col-edt" style="font-size:10px;color:var(--text-muted)">
         ${pbs > 1 ? `(${pbs} EDTs)` : g.leaves[0].edt}
       </td>
-      <td class="rend-col-pbs">${pbs}</td>
-      <td>${Math.round(gHH).toLocaleString()}</td>
-      <td>${pct(gIncid, 3)}</td>
       <td>${pct(gPlan)}</td>
-      <td class="${devClass(gReal - gPlan)}">${pct(gReal)}</td>
-      <td class="${devClass(gDesv)}">${signPct(gDesv)}</td>
-      <td class="${effCls}">${effLbl}</td>
-      <td>
-        ${g.leaves.filter(r => (r.status || '') === 'late' || (r.pctCompReal < r.pctCompPlan - 0.005 && r.pctCompReal > 0)).length > 0
-          ? `<span class="rend-badge rend-st-late">⚠ ${g.leaves.filter(r => r.pctCompReal < r.pctCompPlan - 0.005 && r.pctCompReal > 0).length} atras.</span>`
-          : (gReal >= 0.995 ? `<span class="rend-badge rend-st-ok">✓</span>` : '')}
-      </td>
+      <td class="${devClass(gDesv)}">${pct(gReal)}</td>
+      <td class="${devClass(gDesv)}" style="font-weight:700">${signPct(gDesv)}</td>
+      <td title="Incremento médio planejado/sem">${gAvgPlanInc > 0.00001 ? pct(gAvgPlanInc, 3) : '—'}</td>
+      <td title="Incremento médio real/sem" class="${gAvgRealInc > 0 ? '' : 'rend-zero'}">${gAvgRealInc > 0.00001 ? pct(gAvgRealInc, 3) : '—'}</td>
+      <td class="${_spiCls(gSpiWeek)}" title="SPI da semana atual">${_spiFmt(gSpiWeek)}</td>
+      <td class="${_spiCls(gSpiCum !== null ? gSpiCum : null)}" title="SPI acumulado">${_spiFmt(gSpiCum)}</td>
+      <td class="rend-forecast${gForecastLate}" title="Forecast conclusão">${gForecast ? fmtDate(gForecast) : '—'}</td>
+      <td>${lateCount > 0 ? `<span class="rend-badge rend-st-late">⚠ ${lateCount}</span>`
+           : gReal >= 0.995 ? `<span class="rend-badge rend-st-ok">✓</span>` : ''}</td>
     </tr>`;
 
-    // Individual PB rows
+    // ── Individual PB rows ─────────────────────────────────────────────
     const pbsSorted = [...g.leaves].sort((a, b) => a.edt.localeCompare(b.edt));
     pbsSorted.forEach((r, ri) => {
+      const m    = leafMetrics.find(lm => lm.r === r)?.m || _rendMetrics(r);
       const desv = r.pctCompReal - r.pctCompPlan;
-      const eff  = r.pctCompPlan > 0.001 ? r.pctCompReal / r.pctCompPlan : null;
-      const { lbl: el, cls: ec } = _rendEffCls(eff);
-      const dur  = (r.inicio && r.fin)
-        ? Math.max(1, Math.round(_dateDiffDays(r.fin, r.inicio)))
-        : '—';
-      const hhd  = r.hh && dur !== '—' ? (r.hh / dur).toFixed(1) : '—';
+      const fcLate = m.forecastDate && r.fin && m.forecastDate > r.fin ? ' rend-forecast-late' : '';
 
       html += `<tr class="rend-pb-row rend-row-${gi % 2 === 0 ? 'a' : 'b'}" ${display} data-gid="${gid}">
-        <td class="left rend-col-act rend-pb-cell">
-          <span class="rend-pb-dot"></span>
-          ${r.tarea.trim()}
+        <td class="left rend-col-act rend-pb-cell" title="${r.tarea.trim()}">
+          <span class="rend-pb-dot"></span>${r.tarea.trim()}
         </td>
-        <td class="rend-col-edt" style="font-family:monospace;font-size:11px">${r.edt}</td>
-        <td class="rend-col-pbs" style="font-size:11px;color:var(--text-muted)">
-          ${fmtDate(r.inicio)} → ${fmtDate(r.fin)}<br>
-          <span style="color:var(--muted);font-size:10px">${dur !== '—' ? dur+'d · '+hhd+'h/d' : ''}</span>
+        <td style="font-family:monospace;font-size:11px">${r.edt}<br>
+          <span style="font-size:9px;color:var(--muted)">${fmtDate(r.inicio)} → ${fmtDate(r.fin)}</span>
         </td>
-        <td>${Math.round(r.hh || 0).toLocaleString()}</td>
-        <td style="font-size:11px">${pct(r.incidencia, 3)}</td>
         <td>${pct(r.pctCompPlan)}</td>
         <td class="${devClass(desv)}">${pct(r.pctCompReal)}</td>
-        <td class="${devClass(desv)}">${signPct(desv)}</td>
-        <td class="${ec}">${el}</td>
+        <td class="${devClass(desv)}" style="font-weight:700">${signPct(desv)}</td>
+        <td title="Inc. planejado/sem">${m.avgPlanInc > 0.00001 ? pct(m.avgPlanInc, 3) : '—'}</td>
+        <td title="Inc. real/sem (tendência)" class="${m.avgRealInc > 0 ? '' : 'rend-zero'}">${m.avgRealInc > 0.00001 ? pct(m.avgRealInc, 3) : '—'}</td>
+        <td class="${_spiCls(m.spiWeek)}" title="SPI semana atual">${_spiFmt(m.spiWeek)}</td>
+        <td class="${_spiCls(m.spiCum)}" title="SPI acumulado">${_spiFmt(m.spiCum)}</td>
+        <td class="rend-forecast${fcLate}" title="${fcLate ? '⚠ Atraso vs LB Fin' : 'Forecast conclusão'}">
+          ${m.forecastDate ? fmtDate(m.forecastDate) : '—'}
+          ${fcLate ? '<span style="color:var(--err);font-size:9px"> ⚠</span>' : ''}
+        </td>
         <td>${_rendStatusBadge(r)}</td>
       </tr>`;
     });

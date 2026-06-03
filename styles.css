@@ -1475,10 +1475,15 @@ tr:hover td{background:var(--surface-2)}
 .rend-st-late { background:var(--err-bg);color:var(--err); }
 .rend-st-ns   { background:var(--border2);color:var(--text-muted); }
 
-/* Efficiency column */
-.rend-eff-ok   { color:var(--ok);font-weight:700; }
-.rend-eff-warn { color:var(--warn);font-weight:700; }
-.rend-eff-err  { color:var(--err);font-weight:700; }
+/* SPI column */
+.rend-spi-ok   { color:var(--ok);   font-weight:700; }
+.rend-spi-warn { color:var(--warn); font-weight:700; }
+.rend-spi-err  { color:var(--err);  font-weight:700; }
+/* Forecast column */
+.rend-forecast      { font-size:.78rem; white-space:nowrap; }
+.rend-forecast-late { color:var(--err); font-weight:600; }
+/* Zero / no data cells */
+.rend-zero { color:var(--muted); font-style:italic; }
 
 /* ── Smart Scenarios ─────────────────────────────────────────────────── */
 .smart-panel{ border-left:4px solid #7c3aed; }
