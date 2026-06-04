@@ -5313,34 +5313,30 @@ function _rendMetrics(r) {
   const fullPlan    = r.planSeries || [];
   const fullPlanInc = fullPlan.map((v, i) => Math.max(0, v - (fullPlan[i-1] || 0)));
 
+  // Threshold: 0.1% minimum to ignore Excel floating-point noise
+  const REAL_START_THRESHOLD = 0.001;
+
   // Weekly increments (cumulative[i] - cumulative[i-1])
   const planInc = plan.map((v, i) => Math.max(0, v - (plan[i-1] || 0)));
   const realInc = real.map((v, i) => Math.max(0, v - (real[i-1] || 0)));
 
   // ── Rendimento Produtivo ──────────────────────────────────────────────
-  // Only weeks where real > 0 (cuadrilla working)
-  const prodWeeks    = realInc.filter(v => v > 0.00001);
+  // Only weeks where real >= threshold (cuadrilla working)
+  const prodWeeks    = realInc.filter(v => v >= REAL_START_THRESHOLD);
   const rendProdutivo = prodWeeks.length > 0
     ? prodWeeks.reduce((s, v) => s + v, 0) / prodWeeks.length
     : 0;
 
   // ── Rendimento Real ───────────────────────────────────────────────────
-  // Window: from the first week the activity was released (Inicio LB) up to
-  // current week, including all zeros.
-  // Use r.inicio (ISO date) mapped to D.scurve dates for accuracy.
-  // Fallback: first week with planInc > 0.005 (1% threshold avoids float noise).
-  let startIdx;
-  if (r.inicio && D.scurve.length) {
-    // Find first scurve week whose date >= activity Inicio LB
-    const si = D.scurve.findIndex(s => s.date && s.date >= r.inicio);
-    startIdx = si >= 0 ? si : (planInc.findIndex(v => v > 0.005) || ci);
-  } else {
-    const fp = planInc.findIndex(v => v > 0.005);
-    startIdx = fp >= 0 ? fp : ci;
-  }
+  // Window: from the FIRST WEEK WITH MEANINGFUL REAL PROGRESS up to current week.
+  // Uses 0.1% minimum threshold to ignore floating-point noise from Excel.
+  // Includes all weeks in between (even zeros after start) — reflects true velocity.
+  const REAL_START_THRESHOLD = 0.001;  // 0.1% — filters Excel float noise
+  const firstRealIdx = realInc.findIndex(v => v >= REAL_START_THRESHOLD);
+  const startIdx     = firstRealIdx >= 0 ? firstRealIdx : ci;
   const weeksElapsed = Math.max(1, ci - startIdx + 1);
   const sumRealFromStart = realInc.slice(startIdx).reduce((s, v) => s + v, 0);
-  const rendReal = sumRealFromStart / weeksElapsed;
+  const rendReal = weeksElapsed > 0 ? sumRealFromStart / weeksElapsed : 0;
 
   // ── Rendimento Planejado ──────────────────────────────────────────────
   // Uses FULL planSeries (past + future) — valid for all activities.
@@ -5384,15 +5380,32 @@ function _rendMetrics(r) {
     forecastDate = _isoAddDays(D.meta.dataDate, weeksToComplete * 7);
   }
 
+  // Debug info for tooltip
+  const startWeek = D.scurve[startIdx]?.week || `idx${startIdx}`;
+  const currWeek  = D.scurve[ci]?.week       || `idx${ci}`;
+  // Log to console for debugging
+  if (r.edt === '4.5.2.4') {
+    console.log('[Rend Debug] ' + r.edt + ' ' + r.tarea?.trim());
+    console.log('  firstRealIdx:', firstRealIdx, '→ week:', startWeek);
+    console.log('  ci:', ci, '→ week:', currWeek);
+    console.log('  weeksElapsed:', weeksElapsed);
+    console.log('  sumReal:', sumRealFromStart.toFixed(5));
+    console.log('  rendReal:', rendReal.toFixed(5), '=', (rendReal*100).toFixed(3)+'%');
+    console.log('  realInc (primeiros 30):', realInc.slice(0, 35).map(v => (v*100).toFixed(2)+'%').join(', '));
+    console.log('  pctCompReal:', r.pctCompReal);
+  }
+
   return {
-    rendProdutivo,   // avg of active weeks only
-    rendReal,        // avg including zeros from schedule start
-    rendPlanMed,     // planned avg in same window
+    rendProdutivo,
+    rendReal,
+    rendPlanMed,
     spiCum, spiWeek,
     lastPlanInc, lastRealInc,
     weeksElapsed, prodWeeks: prodWeeks.length,
     weeksToComplete, forecastDate,
     trendInc,
+    // debug
+    startIdx, ci, startWeek, currWeek,
   };
 }
 
@@ -5581,7 +5594,7 @@ function renderRendimentos() {
         <td class="${devClass(desv)}" style="font-weight:700">${signPct(desv)}</td>
         <td title="Rend. Plan = média c/ zeros (${m.weeksElapsed} sem. desde liberação)" class="rend-plan-col">${m.rendPlanMed > 0.00001 ? pct(m.rendPlanMed, 3) : '—'}</td>
         <td title="Rend. Produtivo = (${m.prodWeeks} sem. ativas)" class="rend-prod-col">${m.rendProdutivo > 0.00001 ? pct(m.rendProdutivo, 3) : '—'}</td>
-        <td title="Rend. Real = média c/ zeros (${m.weeksElapsed} sem. desde liberação)" class="${m.rendReal > 0.00001 ? 'rend-real-col' : 'rend-zero'}">${m.rendReal > 0.00001 ? pct(m.rendReal, 3) : '—'}</td>
+        <td title="Rend. Real: ${pct(r.pctCompReal)} ÷ ${m.weeksElapsed} sem = ${pct(m.rendReal,3)}&#10;Início LB: ${r.inicio} → startIdx ${m.startIdx} (${m.startWeek})&#10;Semana atual: ${m.currWeek} (idx ${m.ci})" class="${m.rendReal > 0.00001 ? 'rend-real-col' : 'rend-zero'}">${m.rendReal > 0.00001 ? pct(m.rendReal, 3) : '—'}</td>
         <td class="${_spiCls(m.spiWeek)}" title="SPI semana atual">${_spiFmt(m.spiWeek)}</td>
         <td class="${_spiCls(m.spiCum)}" title="SPI acumulado">${_spiFmt(m.spiCum)}</td>
         <td class="rend-forecast${fcLate}" title="${fcLate ? '⚠ Atraso vs LB Fin' : 'Forecast conclusão'}">
