@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="styles.css?v=7.3">
+  <link rel="stylesheet" href="styles.css?v=7.9">
   <script src="i18n.js?v=2.0"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -592,7 +592,66 @@
 
       <!-- ══ SUB-TAB: AUTO SCENARIO ═══════════════════════════════ -->
       <div id="simPane-auto" style="display:none">
-        <div class="simtab-panel simtab-auto-panel" style="margin-top:0;border-radius:0 var(--radius-lg) var(--radius-lg) var(--radius-lg)">
+
+        <!-- ── Recovery target banner (Gerador Automático) ──────────── -->
+        <div id="autoRecBanner" class="sim-manual-rec-bar" style="display:none">
+          <div class="sim-rec-cfg">
+            <i class="bi bi-bullseye"></i>
+            <span>Recuperar em</span>
+            <input type="number" id="bannerWeeks" value="10" min="1" max="52"
+                   class="banner-weeks-inp"
+                   oninput="updateSimManualBanner()" onchange="updateSimManualBanner()">
+            <span>semanas</span>
+          </div>
+          <div class="sim-rec-items">
+            <div class="sim-rec-item">
+              <span>Semana objetivo</span>
+              <strong id="autoRecWeekDate">—</strong>
+              <small id="autoRecWeekLabel"></small>
+            </div>
+            <div class="sim-rec-item">
+              <span>Plan acumulado</span>
+              <strong id="autoRecPlanAcum" class="auto-rec-blue">—</strong>
+            </div>
+            <div class="sim-rec-item">
+              <span>Real atual</span>
+              <strong id="autoRecRealAcum">—</strong>
+            </div>
+            <div class="sim-rec-item sim-rec-item-hi">
+              <span>Recuperação necessária</span>
+              <strong id="autoRecNeeded" class="auto-rec-orange">—</strong>
+            </div>
+            <div class="sim-rec-item sim-rec-item-hi">
+              <span>Avance requerido/sem</span>
+              <strong id="autoRecPerWeek" class="auto-rec-blue">—</strong>
+            </div>
+            <div class="sim-rec-item">
+              <span>Simulado atual</span>
+              <strong id="smrSimulated">—</strong>
+            </div>
+          </div>
+          <div class="sim-rec-actions">
+            <button class="simtab-btn-primary" onclick="suggestActivities()" id="suggestBtn">
+              <i class="bi bi-magic"></i> Sugerir atividades
+            </button>
+          </div>
+        </div>
+
+        <!-- Suggested activities panel -->
+        <div id="simSuggestPanel" class="sim-suggest-panel" style="display:none">
+          <div class="sim-suggest-hdr">
+            <span id="simSuggestTitle"></span>
+            <div style="display:flex;gap:6px;margin-left:auto">
+              <button class="simtab-btn-outline" onclick="document.getElementById('simSuggestPanel').style.display='none'">✕ Fechar</button>
+              <button class="simtab-btn-primary" onclick="addSuggestedToScenario()">
+                <i class="bi bi-plus-circle"></i> Adicionar todas ao Cenário
+              </button>
+            </div>
+          </div>
+          <div id="simSuggestTable" class="sim-suggest-table-wrap"></div>
+        </div>
+
+        <div class="simtab-panel simtab-auto-panel" style="margin-top:8px;border-radius:var(--radius-lg)">
             <div class="simtab-ph auto-ph">
               <i class="bi bi-stars"></i> GERADOR AUTOMÁTICO DE CENÁRIOS
               <span class="auto-ph-sub">O sistema ranqueia as atividades por potencial de recuperação</span>
@@ -612,13 +671,8 @@
                   <i class="bi bi-shuffle"></i> Misto
                 </button>
               </div>
-              <!-- Params row -->
+              <!-- Params row — weeks now controlled by the banner above -->
               <div class="auto-params-row">
-                <label class="auto-param-lbl">
-                  <i class="bi bi-calendar-week"></i> Horizonte
-                  <input type="number" id="autoWeeks" value="4" min="1" max="52" class="auto-param-inp">
-                  <span>sem.</span>
-                </label>
                 <label class="auto-param-lbl">
                   <i class="bi bi-list-ol"></i> Máx. ativ.
                   <input type="number" id="autoMaxActs" value="50" min="1" max="200" class="auto-param-inp">
@@ -1207,6 +1261,6 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-<script src="app.js?v=11.5"></script>
+<script src="app.js?v=12.4"></script>
 </body>
 </html>

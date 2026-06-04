@@ -1575,6 +1575,158 @@ tr:hover td{background:var(--surface-2)}
 .sim-subtab:hover  { color:var(--text); }
 .sim-subtab.active { color:var(--primary); border-bottom-color:var(--primary); }
 
+/* ── Manual Simulator Recovery Banner ───────────────────────────────── */
+.sim-manual-rec-bar {
+  background: var(--primary-d);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 10px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 0;
+}
+.sim-rec-cfg {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(255,255,255,.8);
+  font-size: .84rem;
+  font-weight: 600;
+  white-space: nowrap;
+  border-right: 1px solid rgba(255,255,255,.15);
+  padding-right: 14px;
+}
+.sim-rec-cfg i { font-size: 1rem; }
+.sim-rec-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  flex: 1;
+}
+.sim-rec-item {
+  display: flex;
+  flex-direction: column;
+  min-width: 90px;
+}
+.sim-rec-item span {
+  font-size: .68rem;
+  color: rgba(255,255,255,.55);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.sim-rec-item strong {
+  font-size: .92rem;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.2;
+}
+.sim-rec-item small {
+  font-size: .68rem;
+  color: rgba(255,255,255,.4);
+}
+.sim-rec-item-hi strong { font-size: 1rem; }
+/* Weeks input inside the banner */
+.banner-weeks-inp {
+  width: 52px;
+  height: 30px;
+  text-align: center;
+  font-size: .92rem;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(255,255,255,.18);
+  border: 1.5px solid rgba(255,255,255,.35);
+  border-radius: 6px;
+  outline: none;
+  padding: 0 4px;
+  transition: border-color .13s, background .13s;
+}
+.banner-weeks-inp:hover  { background: rgba(255,255,255,.26); }
+.banner-weeks-inp:focus  { background: rgba(255,255,255,.28); border-color: rgba(255,255,255,.7); }
+.banner-weeks-inp::-webkit-inner-spin-button { opacity:.6; }
+
+.sim-rec-actions { display:flex; align-items:center; padding: 0 0 0 8px; border-left:1px solid rgba(255,255,255,.15); }
+
+/* Suggested activities panel */
+.sim-suggest-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  margin-bottom: 8px;
+  box-shadow: var(--shadow-md);
+}
+.sim-suggest-hdr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  font-size: .82rem;
+  font-weight: 600;
+  flex-wrap: wrap;
+}
+.sim-suggest-table-wrap { max-height: 320px; overflow-y: auto; }
+.sim-suggest-table-wrap table { font-size: .80rem; }
+.sim-sug-ok   { color: var(--success); font-weight: 700; }
+.sim-sug-warn { color: var(--warn);    font-weight: 700; }
+.sim-sug-last { background: var(--ok-bg) !important; }
+
+/* ── Auto Scenario Recovery Banner ──────────────────────────────────── */
+.auto-rec-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0;
+  background: var(--primary-d);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+  margin-bottom: 0;
+}
+.auto-rec-item {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 18px;
+  border-right: 1px solid rgba(255,255,255,.1);
+  flex: 1;
+  min-width: 120px;
+}
+.auto-rec-item:last-child { border-right: none; }
+.auto-rec-highlight { background: rgba(255,255,255,.06); }
+.auto-rec-lbl {
+  font-size: .70rem;
+  color: rgba(255,255,255,.6);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: 4px;
+}
+.auto-rec-lbl i { margin-right: 4px; }
+.auto-rec-item strong {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: #fff;
+}
+.auto-rec-item small { font-size: .72rem; color: rgba(255,255,255,.5); margin-top: 2px; }
+.auto-rec-blue   { color: #60a5fa !important; }
+.auto-rec-orange { color: #fbbf24 !important; }
+
+/* Coverage bar */
+.auto-rec-coverage {
+  width: 100%;
+  padding: 7px 18px;
+  font-size: .78rem;
+  font-weight: 600;
+  border-top: 1px solid rgba(255,255,255,.1);
+}
+.auto-rec-cov-ok   { color: #4ade80; background: rgba(74,222,128,.1); }
+.auto-rec-cov-warn { color: #fbbf24; background: rgba(251,191,36,.1); }
+.auto-rec-cov-err  { color: #f87171; background: rgba(248,113,113,.1); }
+.auto-rec-coverage i { margin-right: 6px; }
+
 /* ── Auto Scenario Generator ──────────────────────────────────────────── */
 .simtab-auto-panel{
   border-color:var(--primary);

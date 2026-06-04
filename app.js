@@ -1263,6 +1263,10 @@ function render() {
   _tryRender(renderSinAvanceTable, D.sinAvance);
   _tryRender(renderPlazos);
   _tryRender(renderRendimentos);
+  // Initialize recovery banners in both simulator sub-tabs
+  const _initWeeks = Math.max(1, parseInt(document.getElementById('bannerWeeks')?.value || '4'));
+  _autoUpdateRecBanner(_initWeeks, 0);
+  updateSimManualBanner();
   const _rankNeg = D.ranking.filter(r => r.desvPond < 0);
   const _rankPos = D.ranking.filter(r => r.desvPond > 0).sort((a,b) => b.desvPond - a.desvPond);
   _tryRender(renderRankingBar,      _rankNeg.slice(0, 20));
@@ -4510,9 +4514,50 @@ function setAutoType(type) {
   });
 }
 
+/** Compute and display the recovery target banner above the auto generator */
+function _autoUpdateRecBanner(weeks, selectedPotential) {
+  const banner = document.getElementById('autoRecBanner');
+  if (!banner || !D) return;
+
+  const sc        = D.scurve;
+  const currIdx   = sc.findIndex(s => s.isCurrent);
+  const ci        = currIdx >= 0 ? currIdx : sc.length - 1;
+  const targetIdx = Math.min(ci + weeks, sc.length - 1);
+  const targetW   = sc[targetIdx];
+
+  const planAtTarget = targetW ? targetW.plan  : (D.meta.pctPlan + weeks * 0.01);
+  const realCurrent  = D.meta.pctReal;
+  const recNeeded    = Math.max(0, planAtTarget - realCurrent);
+  const recPerWeek   = weeks > 0 ? recNeeded / weeks : 0;
+
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+  // Update the banner input to match the weeks used (if different)
+  const bwEl = document.getElementById('bannerWeeks');
+  if (bwEl && !bwEl.value) bwEl.value = weeks;
+  set('autoRecWeekDate',     targetW?.date ? fmtDate(targetW.date) : '—');
+  set('autoRecWeekLabel',    targetW?.week || '');
+  set('autoRecPlanAcum',     pct(planAtTarget));
+  set('autoRecRealAcum',     pct(realCurrent));
+  set('autoRecNeeded',       `+${(recNeeded * 100).toFixed(2)} p.p.`);
+  set('autoRecPerWeek',      `${(recPerWeek * 100).toFixed(2)} p.p./sem`);
+
+  const covEl = document.getElementById('autoRecCoverage');
+  if (covEl) {
+    const covPct = recNeeded > 0 ? Math.min(100, (selectedPotential / recNeeded) * 100).toFixed(0) : 100;
+    const ok     = selectedPotential >= recNeeded;
+    covEl.style.color = ok ? 'var(--success)' : selectedPotential > recNeeded * 0.5 ? 'var(--warn)' : 'var(--err)';
+    covEl.textContent = selectedPotential > 0
+      ? `${ok ? '✓' : '⚠'} ${pct(selectedPotential)} (${covPct}%)`
+      : '—';
+  }
+
+  banner.style.display = '';
+}
+
 function generateAutoScenario() {
   if (!D) return;
-  const weeks      = Math.max(1, parseInt(document.getElementById('autoWeeks')?.value   || '4'));
+  const weeks      = Math.max(1, parseInt(document.getElementById('bannerWeeks')?.value   || '4'));
   const maxActs    = Math.max(1, parseInt(document.getElementById('autoMaxActs')?.value || '50'));
   const cutDate    = D.meta.dataDate;
   const horizonEnd = _isoAddDays(cutDate, weeks * 7);
@@ -4582,6 +4627,10 @@ function generateAutoScenario() {
 
   renderAutoScResults();
   document.getElementById('autoScResults').style.display = '';
+
+  // Update recovery banner with total potential of generated activities
+  const totalPotential = _autoScRows.reduce((s, r) => s + r.potential, 0);
+  _autoUpdateRecBanner(weeks, totalPotential);
 }
 
 function renderAutoScResults() {
@@ -4645,6 +4694,10 @@ function renderAutoScResults() {
 function _autoScToggle(idx, checked) {
   if (_autoScRows[idx]) _autoScRows[idx].selected = checked;
   renderAutoScResults();
+  // Recalculate coverage with newly selected activities
+  const weeks    = Math.max(1, parseInt(document.getElementById('bannerWeeks')?.value || '4'));
+  const selPot   = _autoScRows.filter(r => r.selected).reduce((s, r) => s + r.potential, 0);
+  _autoUpdateRecBanner(weeks, selPot);
 }
 
 function autoScSelectAll(state) {
@@ -4948,7 +5001,266 @@ function renderSimTab() {
   _simTabUpdateKPIs();
   _renderSimTabTable();
   _renderSimTabChart();
-  renderSimActList();   // refresh activity list (marks added activities as unavailable)
+  renderSimActList();
+  updateSimManualBanner();  // keep recovery banner in sync with current scenario
+}
+
+let _suggestedRows = [];   // activities suggested by suggestActivities()
+
+/** Suggest the minimum set of activities to cover the recovery target */
+function suggestActivities() {
+  if (!D) return;
+  const weeks = Math.max(1, parseInt(
+    document.getElementById('bannerWeeks')?.value || '10'
+  ));
+  const sc        = D.scurve;
+  const currIdx   = sc.findIndex(s => s.isCurrent);
+  const ci        = currIdx >= 0 ? currIdx : sc.length - 1;
+  const targetIdx = Math.min(ci + weeks, sc.length - 1);
+  const targetW   = sc[targetIdx];
+
+  const planAtTarget = targetW ? targetW.plan : 0;
+  const realCurrent  = D.meta.pctReal;
+  const recNeeded    = Math.max(0, planAtTarget - realCurrent);
+
+  if (recNeeded < 0.0001) { showToast('Sem recuperação necessária para esse horizonte', false); return; }
+
+  const cutDate    = D.meta.dataDate;
+  const horizonEnd = _isoAddDays(cutDate, weeks * 7);
+  const addedEdts  = new Set(_simTabRows.map(r => r.edt));
+  const allLeaves  = D.allLeaves;
+
+  // ── Helper: check construction logic blockers ────────────────────────
+  function getBlocker(r) {
+    const blockers = _smartFindBlockers(r, allLeaves);
+    // Return the blocker with highest incidencia that is still incomplete
+    return blockers
+      .filter(b => b.pctCompReal < 0.995)
+      .sort((a, b) => b.incidencia - a.incidencia)[0] || null;
+  }
+
+  // ── PRIORITY 1: should have FINISHED but haven't ─────────────────────
+  // fin <= cutDate AND pctReal < 99.5% — most urgent
+  const p1 = allLeaves
+    .filter(r => r.incidencia > 0 && !addedEdts.has(r.edt) &&
+      r.fin && r.fin <= cutDate && r.pctCompReal < 0.995)
+    .map(r => ({
+      ...r, priority: 1,
+      label: '🔴 Deveria ter terminado',
+      labelColor: 'var(--err)',
+      potential: r.incidencia * (1 - r.pctCompReal),
+    }))
+    .sort((a, b) => b.incidencia - a.incidencia);   // highest incidencia first
+
+  // ── PRIORITY 2: should have STARTED but haven't ───────────────────────
+  // inicio <= cutDate AND pctReal = 0 AND pctPlan > 0
+  const p2 = allLeaves
+    .filter(r => r.incidencia > 0 && !addedEdts.has(r.edt) &&
+      r.pctCompReal === 0 && r.pctCompPlan > 0.005 &&
+      r.inicio && r.inicio <= cutDate &&
+      !(r.fin && r.fin <= cutDate))  // not already in P1
+    .map(r => ({
+      ...r, priority: 2,
+      label: '🟡 Deveria ter começado',
+      labelColor: 'var(--warn)',
+      potential: r.incidencia * r.pctCompPlan,
+    }))
+    .sort((a, b) => b.incidencia - a.incidencia);
+
+  // ── PRIORITY 3: should START within the horizon ───────────────────────
+  // inicio > cutDate AND inicio <= horizonEnd
+  const p3 = allLeaves
+    .filter(r => r.incidencia > 0 && !addedEdts.has(r.edt) &&
+      r.pctCompReal === 0 &&
+      r.inicio && r.inicio > cutDate && r.inicio <= horizonEnd)
+    .map(r => {
+      const daysAfterStart = _dateDiffDays(horizonEnd, r.inicio);
+      const weeksAvail     = Math.max(0, daysAfterStart / 7);
+      const dur            = (r.fin && r.inicio)
+        ? Math.max(1, _dateDiffDays(r.fin, r.inicio) / 7) : weeks;
+      const frac           = Math.min(1, weeksAvail / dur);
+      return {
+        ...r, priority: 3,
+        label: '🔵 Iniciar nas próximas ' + weeks + ' sem.',
+        labelColor: '#0ea5e9',
+        weeksToStart: Math.ceil(_dateDiffDays(r.inicio, cutDate) / 7),
+        potential: r.incidencia * frac,
+      };
+    })
+    .sort((a, b) => b.incidencia - a.incidencia);
+
+  // ── Apply construction logic + greedy selection ───────────────────────
+  // Process in priority order; for each activity check if it has a blocker.
+  // If blocked → replace with blocker (habilitadora) + mark original as "after blocker"
+  const seenEdts = new Set();
+  const finalList = [];
+  let cumPotential = 0;
+
+  function tryAdd(r) {
+    if (seenEdts.has(r.edt)) return;
+    const blocker = getBlocker(r);
+    if (blocker && !seenEdts.has(blocker.edt)) {
+      // Add the blocker first (it must be executed before this one)
+      const bWithMeta = {
+        ...blocker,
+        priority: r.priority,
+        label: '🔓 Habilitadora',
+        labelColor: '#7c3aed',
+        note: `Necessária para: ${r.tarea.trim().slice(0,35)}`,
+        potential: blocker.incidencia * (blocker.pctCompPlan - blocker.pctCompReal + 0.001),
+        isEnabler: true,
+      };
+      seenEdts.add(blocker.edt);
+      finalList.push(bWithMeta);
+      cumPotential += bWithMeta.potential;
+    }
+    // Then add the original activity (now marked as "depends on enabler" if blocked)
+    const rFinal = blocker
+      ? { ...r, note: `Após: ${blocker.tarea.trim().slice(0,35)}`, isBlocked: true }
+      : r;
+    seenEdts.add(r.edt);
+    finalList.push(rFinal);
+    cumPotential += r.potential;
+  }
+
+  // Greedy: process P1 → P2 → P3, stop when coverage reached
+  for (const pool of [p1, p2, p3]) {
+    for (const r of pool) {
+      if (seenEdts.has(r.edt)) continue;
+      tryAdd(r);
+      if (cumPotential >= recNeeded) break;
+    }
+    if (cumPotential >= recNeeded) break;
+  }
+
+  _suggestedRows = finalList;
+
+  // ── Render ────────────────────────────────────────────────────────────
+  const panel       = document.getElementById('simSuggestPanel');
+  const titleEl     = document.getElementById('simSuggestTitle');
+  const tableWrapEl = document.getElementById('simSuggestTable');
+  if (!panel || !tableWrapEl) return;
+
+  const covPct    = recNeeded > 0 ? Math.min(100, (cumPotential / recNeeded) * 100).toFixed(0) : 100;
+  const statusCls = cumPotential >= recNeeded ? 'sim-sug-ok' : 'sim-sug-warn';
+  const cnt       = (p) => finalList.filter(r => r.priority === p && !r.isEnabler).length;
+  const enablers  = finalList.filter(r => r.isEnabler).length;
+
+  if (titleEl) titleEl.innerHTML = `
+    <span class="${statusCls}">
+      <i class="bi bi-${cumPotential >= recNeeded ? 'check-circle-fill' : 'exclamation-triangle-fill'}"></i>
+      ${finalList.length} atividades sugeridas — Cobertura: ${pct(cumPotential,2)} de ${pct(recNeeded,2)} necessários (${covPct}%)
+    </span>
+    <span style="font-size:11px;color:var(--err);margin-left:8px">🔴 ${cnt(1)} deveriam ter terminado</span>
+    <span style="font-size:11px;color:var(--warn);margin-left:6px">🟡 ${cnt(2)} deveriam ter começado</span>
+    <span style="font-size:11px;color:#0ea5e9;margin-left:6px">🔵 ${cnt(3)} próximas</span>
+    ${enablers ? `<span style="font-size:11px;color:#7c3aed;margin-left:6px">🔓 ${enablers} habilitadoras</span>` : ''}`;
+
+  const head = `<tr>
+    <th>#</th>
+    <th class="left">Atividade</th>
+    <th>EDT</th>
+    <th>Incid.</th>
+    <th>% Plan</th><th>% Real</th>
+    <th>Potencial</th>
+    <th>Acumulado</th>
+    <th>Classificação</th>
+  </tr>`;
+
+  let cum = 0;
+  let dispIdx = 0;
+  const body = finalList.map(r => {
+    cum += r.potential;
+    dispIdx++;
+    const isLastNeeded = cum >= recNeeded && (cum - r.potential) < recNeeded;
+    const rowBg = r.isEnabler
+      ? 'background:rgba(124,58,237,.08)'
+      : isLastNeeded ? '' : '';
+    const rowCls = isLastNeeded ? 'sim-sug-last' : '';
+    const note   = r.note
+      ? `<br><span style="font-size:9px;color:var(--muted)">${r.note}</span>` : '';
+    const weeksInfo = r.weeksToStart
+      ? `<br><span style="font-size:9px;color:#0ea5e9">inicia em ${r.weeksToStart} sem.</span>` : '';
+    return `<tr class="${rowCls}" style="${rowBg}">
+      <td style="text-align:center;font-weight:700;font-size:.82rem;color:var(--muted)">${dispIdx}</td>
+      <td class="left" style="max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${r.tarea.trim()}">${r.tarea.trim()}${note}${weeksInfo}</td>
+      <td style="font-family:monospace;font-size:11px">${r.edt}</td>
+      <td><strong>${pct(r.incidencia, 3)}</strong></td>
+      <td>${pct(r.pctCompPlan)}</td>
+      <td class="${devClass(r.pctCompReal - r.pctCompPlan)}">${pct(r.pctCompReal)}</td>
+      <td class="auto-potential"><strong>${pct(r.potential, 3)}</strong></td>
+      <td class="${cum >= recNeeded ? 'sim-sug-ok' : 'auto-potential'}">
+        <strong>${pct(cum, 3)}</strong>${cum >= recNeeded ? ' ✓' : ''}
+      </td>
+      <td style="font-size:11px;color:${r.labelColor};white-space:normal;font-weight:600;max-width:140px">
+        ${r.label}
+      </td>
+    </tr>`;
+  }).join('');
+
+  tableWrapEl.innerHTML = tableWrap(head, body);
+  panel.style.display = '';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** Add all suggested activities to the simulation scenario */
+function addSuggestedToScenario() {
+  if (!_suggestedRows.length) return;
+  const addedEdts = new Set(_simTabRows.map(r => r.edt));
+  let added = 0;
+  _suggestedRows.forEach(r => {
+    if (addedEdts.has(r.edt)) return;
+    const leaf = _simTabGetLeaves().find(l => l.edt === r.edt)
+              || (D ? D.allLeaves.find(l => l.edt === r.edt) : null);
+    if (!leaf) return;
+    const hasPB = !!leaf.isConsolidated || (leaf.pbTotal != null && leaf.pbTotal > 0);
+    _simTabRows.push({ edt: r.edt, delta: 0, mode: hasPB ? 'pb' : 'pct' });
+    addedEdts.add(r.edt);
+    added++;
+  });
+  if (added > 0) {
+    renderSimTab();
+    document.getElementById('simSuggestPanel').style.display = 'none';
+    showToast(`${added} atividades adicionadas ao cenário`);
+  }
+}
+
+/** Update the recovery target banner (Gerador Automático) */
+function updateSimManualBanner() {
+  if (!D) return;
+  const weeks = Math.max(1, parseInt(
+    document.getElementById('bannerWeeks')?.value || '10'
+  ));
+  const sc        = D.scurve;
+  const currIdx   = sc.findIndex(s => s.isCurrent);
+  const ci        = currIdx >= 0 ? currIdx : sc.length - 1;
+  const targetIdx = Math.min(ci + weeks, sc.length - 1);
+  const targetW   = sc[targetIdx];
+
+  const planAtTarget = targetW ? targetW.plan  : 0;
+  const realCurrent  = D.meta.pctReal;
+  const recNeeded    = Math.max(0, planAtTarget - realCurrent);
+  const recPerWeek   = weeks > 0 ? recNeeded / weeks : 0;
+  const simRec       = _simTabTotalRecovery();
+  const newReal      = realCurrent + simRec;
+  const gap          = newReal - planAtTarget;
+
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('smrDate',    targetW?.date ? fmtDate(targetW.date) : '—');
+  set('smrWeek',    targetW?.week || '');
+  set('smrPlan',    pct(planAtTarget));
+  set('smrReal',    pct(realCurrent));
+  set('smrNeeded',  `+${(recNeeded * 100).toFixed(2)} p.p.`);
+  set('smrPerWeek', `${(recPerWeek * 100).toFixed(2)} p.p./sem`);
+
+  const simEl = document.getElementById('smrSimulated');
+  if (simEl) {
+    simEl.textContent = simRec > 0
+      ? `${pct(newReal)} (${gap >= 0 ? '✓ +' : ''}${(gap * 100).toFixed(2)} p.p.)`
+      : '—';
+    simEl.style.color = simRec > 0 ? (gap >= 0 ? 'var(--success)' : 'var(--warn)') : '';
+  }
 }
 
 // ── Deviation Recovery Simulator ─────────────────────────────────────────────
