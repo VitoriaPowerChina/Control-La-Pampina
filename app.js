@@ -5305,55 +5305,68 @@ function _rendMetrics(r) {
   const currIdx = D.scurve.findIndex(s => s.isCurrent);
   const ci      = currIdx >= 0 ? currIdx : (D.scurve.length - 1);
 
-  const plan    = (r.planSeries || []).slice(0, ci + 1);
-  const real    = (r.realSeries || []).slice(0, ci + 1);
+  const plan = (r.planSeries || []).slice(0, ci + 1);
+  const real = (r.realSeries || []).slice(0, ci + 1);
 
-  // Weekly increments (avanço incremental = week[i] - week[i-1])
+  // Weekly increments (cumulative[i] - cumulative[i-1])
   const planInc = plan.map((v, i) => Math.max(0, v - (plan[i-1] || 0)));
   const realInc = real.map((v, i) => Math.max(0, v - (real[i-1] || 0)));
 
-  // Active weeks = weeks where plan increment > 0 (activity was scheduled)
-  const activeIdxs   = planInc.map((v, i) => v > 0.00001 ? i : -1).filter(i => i >= 0);
-  const realActiveIdxs = realInc.map((v, i) => v > 0.00001 ? i : -1).filter(i => i >= 0);
+  // ── Rendimento Produtivo ──────────────────────────────────────────────
+  // Only weeks where real > 0 (cuadrilla working)
+  // = sum(realInc > 0) / count(realInc > 0)
+  const prodWeeks    = realInc.filter(v => v > 0.00001);
+  const rendProdutivo = prodWeeks.length > 0
+    ? prodWeeks.reduce((s, v) => s + v, 0) / prodWeeks.length
+    : 0;
 
-  // Average weekly advance
-  const avgPlanInc = activeIdxs.length   ? planInc.filter((_, i) => activeIdxs.includes(i)).reduce((s, v) => s + v, 0) / activeIdxs.length : 0;
-  const avgRealInc = realActiveIdxs.length ? realInc.filter((_, i) => realActiveIdxs.includes(i)).reduce((s, v) => s + v, 0) / realActiveIdxs.length : 0;
+  // ── Rendimento Real ───────────────────────────────────────────────────
+  // Includes ALL weeks from the first week the activity was released in the
+  // schedule (first planInc > 0) up to current week, including zeros.
+  // = sum(all realInc from startIdx to ci) / (ci - startIdx + 1)
+  const firstPlanIdx = planInc.findIndex(v => v > 0.00001);
+  const startIdx     = firstPlanIdx >= 0 ? firstPlanIdx : ci;   // fallback: use current
+  const weeksElapsed = Math.max(1, ci - startIdx + 1);
+  const sumRealFromStart = realInc.slice(startIdx).reduce((s, v) => s + v, 0);
+  const rendReal = sumRealFromStart / weeksElapsed;
 
-  // SPI cumulative = pctCompReal / pctCompPlan at current week
+  // ── Planned average (same window as rendReal) ────────────────────────
+  const sumPlanFromStart = planInc.slice(startIdx).reduce((s, v) => s + v, 0);
+  const rendPlanMed = sumPlanFromStart / weeksElapsed;
+
+  // ── SPI cumulative = realCum / planCum ───────────────────────────────
   const planCum = plan[ci] || r.pctCompPlan || 0;
   const realCum = real[ci] || r.pctCompReal || 0;
   const spiCum  = planCum > 0.00001 ? realCum / planCum : null;
 
-  // SPI weekly (current week increments)
+  // ── SPI weekly (current week) ─────────────────────────────────────────
   const lastPlanInc = planInc[ci] || 0;
   const lastRealInc = realInc[ci] || 0;
   const spiWeek = lastPlanInc > 0.00001 ? lastRealInc / lastPlanInc : null;
 
-  // Forecast: weeks needed to reach pctCompPlan (target) from current real
-  // Use recent trend (last 4 active real weeks for stability)
-  const recent4 = realInc.filter(v => v > 0.00001).slice(-4);
+  // ── Forecast: use rendReal (project perspective) ─────────────────────
+  // Use trend of last 4 active weeks for the estimate
+  const recent4  = prodWeeks.slice(-4);
   const trendInc = recent4.length > 0
     ? recent4.reduce((s, v) => s + v, 0) / recent4.length
-    : avgRealInc;
+    : rendReal;
 
-  const remaining      = Math.max(0, 1 - r.pctCompReal);   // to full completion
-  const remainingPlan  = Math.max(0, r.pctCompPlan - r.pctCompReal);  // to catch up to plan
+  const remaining = Math.max(0, 1 - r.pctCompReal);
+  const weeksToComplete = trendInc > 0.00001 ? Math.ceil(remaining / trendInc) : null;
 
-  const weeksToComplete  = trendInc > 0.00001 ? Math.ceil(remaining   / trendInc) : null;
-  const weeksToCatchUp   = trendInc > 0.00001 ? Math.ceil(remainingPlan / trendInc) : null;
-
-  // Forecast date (to complete 100%)
   let forecastDate = null;
   if (weeksToComplete !== null && D.meta.dataDate) {
     forecastDate = _isoAddDays(D.meta.dataDate, weeksToComplete * 7);
   }
 
   return {
-    avgPlanInc, avgRealInc,
+    rendProdutivo,   // avg of active weeks only
+    rendReal,        // avg including zeros from schedule start
+    rendPlanMed,     // planned avg in same window
     spiCum, spiWeek,
     lastPlanInc, lastRealInc,
-    weeksToComplete, weeksToCatchUp, forecastDate,
+    weeksElapsed, prodWeeks: prodWeeks.length,
+    weeksToComplete, forecastDate,
     trendInc,
   };
 }
@@ -5482,8 +5495,9 @@ function renderRendimentos() {
     // Aggregate metrics (weighted avg by incidencia)
     const leafMetrics = g.leaves.map(r => ({ r, m: _rendMetrics(r) }));
     const totInc  = leafMetrics.reduce((s, { r }) => s + r.incidencia, 0) || 1;
-    const gAvgPlanInc = leafMetrics.reduce((s, { r, m }) => s + r.incidencia * m.avgPlanInc, 0) / totInc;
-    const gAvgRealInc = leafMetrics.reduce((s, { r, m }) => s + r.incidencia * m.avgRealInc, 0) / totInc;
+    const gAvgPlanInc  = leafMetrics.reduce((s, { r, m }) => s + r.incidencia * m.rendPlanMed,   0) / totInc;
+    const gRendProd    = leafMetrics.reduce((s, { r, m }) => s + r.incidencia * m.rendProdutivo, 0) / totInc;
+    const gRendReal    = leafMetrics.reduce((s, { r, m }) => s + r.incidencia * m.rendReal,      0) / totInc;
     const gSpiCum     = leafMetrics.filter(({ m }) => m.spiCum !== null)
       .reduce((s, { r, m }) => s + r.incidencia * m.spiCum, 0) / totInc;
     const gSpiWeek    = (() => {
@@ -5513,8 +5527,8 @@ function renderRendimentos() {
       <td>${pct(gPlan)}</td>
       <td class="${devClass(gDesv)}">${pct(gReal)}</td>
       <td class="${devClass(gDesv)}" style="font-weight:700">${signPct(gDesv)}</td>
-      <td title="Incremento médio planejado/sem">${gAvgPlanInc > 0.00001 ? pct(gAvgPlanInc, 3) : '—'}</td>
-      <td title="Incremento médio real/sem" class="${gAvgRealInc > 0 ? '' : 'rend-zero'}">${gAvgRealInc > 0.00001 ? pct(gAvgRealInc, 3) : '—'}</td>
+      <td title="Rend. Produtivo: média das semanas COM produção" class="rend-prod-col">${gRendProd > 0.00001 ? pct(gRendProd, 3) : '—'}</td>
+      <td title="Rend. Real: inclui zeros desde liberação no cronograma" class="${gRendReal > 0.00001 ? 'rend-real-col' : 'rend-zero'}">${gRendReal > 0.00001 ? pct(gRendReal, 3) : '—'}</td>
       <td class="${_spiCls(gSpiWeek)}" title="SPI da semana atual">${_spiFmt(gSpiWeek)}</td>
       <td class="${_spiCls(gSpiCum !== null ? gSpiCum : null)}" title="SPI acumulado">${_spiFmt(gSpiCum)}</td>
       <td class="rend-forecast${gForecastLate}" title="Forecast conclusão">${gForecast ? fmtDate(gForecast) : '—'}</td>
@@ -5539,8 +5553,8 @@ function renderRendimentos() {
         <td>${pct(r.pctCompPlan)}</td>
         <td class="${devClass(desv)}">${pct(r.pctCompReal)}</td>
         <td class="${devClass(desv)}" style="font-weight:700">${signPct(desv)}</td>
-        <td title="Inc. planejado/sem">${m.avgPlanInc > 0.00001 ? pct(m.avgPlanInc, 3) : '—'}</td>
-        <td title="Inc. real/sem (tendência)" class="${m.avgRealInc > 0 ? '' : 'rend-zero'}">${m.avgRealInc > 0.00001 ? pct(m.avgRealInc, 3) : '—'}</td>
+        <td title="Rend. Produtivo = (${m.prodWeeks} sem. ativas)" class="rend-prod-col">${m.rendProdutivo > 0.00001 ? pct(m.rendProdutivo, 3) : '—'}</td>
+        <td title="Rend. Real = média c/ zeros (${m.weeksElapsed} sem. desde liberação)" class="${m.rendReal > 0.00001 ? 'rend-real-col' : 'rend-zero'}">${m.rendReal > 0.00001 ? pct(m.rendReal, 3) : '—'}</td>
         <td class="${_spiCls(m.spiWeek)}" title="SPI semana atual">${_spiFmt(m.spiWeek)}</td>
         <td class="${_spiCls(m.spiCum)}" title="SPI acumulado">${_spiFmt(m.spiCum)}</td>
         <td class="rend-forecast${fcLate}" title="${fcLate ? '⚠ Atraso vs LB Fin' : 'Forecast conclusão'}">
