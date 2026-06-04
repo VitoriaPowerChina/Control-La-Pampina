@@ -5328,10 +5328,8 @@ function _rendMetrics(r) {
     : 0;
 
   // ── Rendimento Real ───────────────────────────────────────────────────
-  // Window: from the FIRST WEEK WITH MEANINGFUL REAL PROGRESS up to current week.
-  // Uses 0.1% minimum threshold to ignore floating-point noise from Excel.
-  // Includes all weeks in between (even zeros after start) — reflects true velocity.
-  const REAL_START_THRESHOLD = 0.001;  // 0.1% — filters Excel float noise
+  // Window: from the first week with meaningful real progress to current week.
+  // (REAL_START_THRESHOLD defined above, = 0.1%)
   const firstRealIdx = realInc.findIndex(v => v >= REAL_START_THRESHOLD);
   const startIdx     = firstRealIdx >= 0 ? firstRealIdx : ci;
   const weeksElapsed = Math.max(1, ci - startIdx + 1);
