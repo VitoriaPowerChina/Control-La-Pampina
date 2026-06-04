@@ -5527,6 +5527,7 @@ function renderRendimentos() {
       <td>${pct(gPlan)}</td>
       <td class="${devClass(gDesv)}">${pct(gReal)}</td>
       <td class="${devClass(gDesv)}" style="font-weight:700">${signPct(gDesv)}</td>
+      <td title="Rend. Planejado: média do plan c/ zeros desde liberação" class="rend-plan-col">${gAvgPlanInc > 0.00001 ? pct(gAvgPlanInc, 3) : '—'}</td>
       <td title="Rend. Produtivo: média das semanas COM produção" class="rend-prod-col">${gRendProd > 0.00001 ? pct(gRendProd, 3) : '—'}</td>
       <td title="Rend. Real: inclui zeros desde liberação no cronograma" class="${gRendReal > 0.00001 ? 'rend-real-col' : 'rend-zero'}">${gRendReal > 0.00001 ? pct(gRendReal, 3) : '—'}</td>
       <td class="${_spiCls(gSpiWeek)}" title="SPI da semana atual">${_spiFmt(gSpiWeek)}</td>
@@ -5553,6 +5554,7 @@ function renderRendimentos() {
         <td>${pct(r.pctCompPlan)}</td>
         <td class="${devClass(desv)}">${pct(r.pctCompReal)}</td>
         <td class="${devClass(desv)}" style="font-weight:700">${signPct(desv)}</td>
+        <td title="Rend. Plan = média c/ zeros (${m.weeksElapsed} sem. desde liberação)" class="rend-plan-col">${m.rendPlanMed > 0.00001 ? pct(m.rendPlanMed, 3) : '—'}</td>
         <td title="Rend. Produtivo = (${m.prodWeeks} sem. ativas)" class="rend-prod-col">${m.rendProdutivo > 0.00001 ? pct(m.rendProdutivo, 3) : '—'}</td>
         <td title="Rend. Real = média c/ zeros (${m.weeksElapsed} sem. desde liberação)" class="${m.rendReal > 0.00001 ? 'rend-real-col' : 'rend-zero'}">${m.rendReal > 0.00001 ? pct(m.rendReal, 3) : '—'}</td>
         <td class="${_spiCls(m.spiWeek)}" title="SPI semana atual">${_spiFmt(m.spiWeek)}</td>
