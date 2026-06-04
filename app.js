@@ -5305,8 +5305,13 @@ function _rendMetrics(r) {
   const currIdx = D.scurve.findIndex(s => s.isCurrent);
   const ci      = currIdx >= 0 ? currIdx : (D.scurve.length - 1);
 
+  // Sliced to current week (for real metrics only)
   const plan = (r.planSeries || []).slice(0, ci + 1);
   const real = (r.realSeries || []).slice(0, ci + 1);
+
+  // Full plan series — includes future weeks (needed for Rend. Plan of future activities)
+  const fullPlan    = r.planSeries || [];
+  const fullPlanInc = fullPlan.map((v, i) => Math.max(0, v - (fullPlan[i-1] || 0)));
 
   // Weekly increments (cumulative[i] - cumulative[i-1])
   const planInc = plan.map((v, i) => Math.max(0, v - (plan[i-1] || 0)));
@@ -5314,25 +5319,45 @@ function _rendMetrics(r) {
 
   // ── Rendimento Produtivo ──────────────────────────────────────────────
   // Only weeks where real > 0 (cuadrilla working)
-  // = sum(realInc > 0) / count(realInc > 0)
   const prodWeeks    = realInc.filter(v => v > 0.00001);
   const rendProdutivo = prodWeeks.length > 0
     ? prodWeeks.reduce((s, v) => s + v, 0) / prodWeeks.length
     : 0;
 
   // ── Rendimento Real ───────────────────────────────────────────────────
-  // Includes ALL weeks from the first week the activity was released in the
-  // schedule (first planInc > 0) up to current week, including zeros.
-  // = sum(all realInc from startIdx to ci) / (ci - startIdx + 1)
-  const firstPlanIdx = planInc.findIndex(v => v > 0.00001);
-  const startIdx     = firstPlanIdx >= 0 ? firstPlanIdx : ci;   // fallback: use current
+  // Window: from the first week the activity was released (Inicio LB) up to
+  // current week, including all zeros.
+  // Use r.inicio (ISO date) mapped to D.scurve dates for accuracy.
+  // Fallback: first week with planInc > 0.005 (1% threshold avoids float noise).
+  let startIdx;
+  if (r.inicio && D.scurve.length) {
+    // Find first scurve week whose date >= activity Inicio LB
+    const si = D.scurve.findIndex(s => s.date && s.date >= r.inicio);
+    startIdx = si >= 0 ? si : (planInc.findIndex(v => v > 0.005) || ci);
+  } else {
+    const fp = planInc.findIndex(v => v > 0.005);
+    startIdx = fp >= 0 ? fp : ci;
+  }
   const weeksElapsed = Math.max(1, ci - startIdx + 1);
   const sumRealFromStart = realInc.slice(startIdx).reduce((s, v) => s + v, 0);
   const rendReal = sumRealFromStart / weeksElapsed;
 
-  // ── Planned average (same window as rendReal) ────────────────────────
-  const sumPlanFromStart = planInc.slice(startIdx).reduce((s, v) => s + v, 0);
-  const rendPlanMed = sumPlanFromStart / weeksElapsed;
+  // ── Rendimento Planejado ──────────────────────────────────────────────
+  // Uses FULL planSeries (past + future) — valid for all activities.
+  // If the weekly series has meaningful data → average of non-zero plan increments.
+  // Fallback (series all-zero or no data) → 100% / planned duration in weeks.
+  const activePlanIncs = fullPlanInc.filter(v => v > 0.00001);
+  let rendPlanMed;
+  if (activePlanIncs.length > 0) {
+    rendPlanMed = activePlanIncs.reduce((s, v) => s + v, 0) / activePlanIncs.length;
+  } else if (r.inicio && r.fin) {
+    // Fallback: 100% completion ÷ planned duration in weeks
+    const daysPlanned = Math.max(7, _dateDiffDays(r.fin, r.inicio));
+    const weeksPlanned = daysPlanned / 7;
+    rendPlanMed = 1.0 / weeksPlanned;   // fraction per week (e.g. 0.0714 = 14.3%/week for 7-week activity)
+  } else {
+    rendPlanMed = 0;
+  }
 
   // ── SPI cumulative = realCum / planCum ───────────────────────────────
   const planCum = plan[ci] || r.pctCompPlan || 0;
